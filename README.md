@@ -124,9 +124,9 @@ compared against each other):
 ```
 master: master.jpg
 
-photo                           faces  similarity  match %  confidence      same?
-photo1.jpg                        1        0.7437    79.9%  Likely          yes
-photo2.jpg                        1        0.0992    29.3%  Unlikely        no
+photo                           faces similarity  match %  confidence
+photo1.jpg                          1     0.7437    79.9%  Likely
+photo2.jpg                          1     0.0992    29.3%  Unlikely
 ```
 
 If a slave photo has more than one person in it, `facecomp` compares
