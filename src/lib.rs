@@ -131,7 +131,6 @@ impl FaceComparer {
         Ok(Comparison {
             similarity,
             match_percent: similarity_to_percent(similarity, threshold),
-            same_person: similarity >= threshold,
         })
     }
 
@@ -212,7 +211,6 @@ fn face_area(faces: &Mat, row: i32) -> f32 {
 pub struct Comparison {
     pub similarity: f64,
     pub match_percent: f64,
-    pub same_person: bool,
 }
 
 /// Maps an SFace cosine similarity onto a 0-100 heuristic "percent match".

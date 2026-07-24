@@ -53,7 +53,6 @@ struct MasterComparison {
     similarity: f64,
     match_percent: f64,
     confidence: &'static str,
-    same_person: bool,
 }
 
 #[derive(Serialize)]
@@ -142,7 +141,6 @@ fn main() -> ExitCode {
                             similarity: best.similarity,
                             match_percent: best.match_percent,
                             confidence: confidence_label(best.match_percent),
-                            same_person: best.same_person,
                         });
                     }
                     Err(e) => errors.push(format!("{}: {e}", slave.display())),
@@ -166,18 +164,17 @@ fn main() -> ExitCode {
         }
         println!("master: {}\n", args.master.display());
         println!(
-            "{:<30} {:>6} {:>10} {:>8}  {:<16}same?",
-            "photo", "faces", "similarity", "match %", "confidence"
+            "{:<30} {:>6} {:>10} {:>8}  confidence",
+            "photo", "faces", "similarity", "match %"
         );
         for r in &results {
             println!(
-                "{:<30} {:>6} {:>10.4} {:>7.1}%  {:<16}{}",
+                "{:<30} {:>6} {:>10.4} {:>7.1}%  {}",
                 r.photo.display(),
                 r.faces_detected,
                 r.similarity,
                 r.match_percent,
                 r.confidence,
-                if r.same_person { "yes" } else { "no" }
             );
         }
     }
