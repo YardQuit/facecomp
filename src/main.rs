@@ -9,7 +9,12 @@ use facecomp::{compare, confidence_label, FaceComparer, DEFAULT_THRESHOLD};
 /// Compare a master photo against one or more other photos and report a
 /// percentage match plus a qualitative confidence label for each.
 #[derive(Parser)]
-#[command(name = "facecomp", version, about)]
+#[command(
+    name = "facecomp",
+    version,
+    about = "Compare a master photo against one or more other photos and report a percentage match plus a confidence label for each",
+    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found."
+)]
 struct Args {
     /// The reference photo every other photo is compared against.
     #[arg(long)]
@@ -42,6 +47,7 @@ struct Args {
 #[derive(Serialize)]
 struct MasterComparison {
     photo: PathBuf,
+    faces_detected: usize,
     distance: f64,
     match_percent: f64,
     confidence: &'static str,
@@ -113,15 +119,23 @@ fn main() -> ExitCode {
 
     let mut results = Vec::new();
     for slave in &slaves {
-        match comparer.encode_face(slave) {
-            Ok(encoding) => {
-                let result = compare(&master_encoding, &encoding, args.threshold);
+        match comparer.encode_all_faces(slave) {
+            Ok(encodings) => {
+                // A slave photo may contain more than one person; compare the
+                // master against every face found and keep the best match,
+                // rather than assuming there's only one face in frame.
+                let best = encodings
+                    .iter()
+                    .map(|encoding| compare(&master_encoding, encoding, args.threshold))
+                    .max_by(|a, b| a.match_percent.total_cmp(&b.match_percent))
+                    .expect("encode_all_faces never returns an empty Vec on success");
                 results.push(MasterComparison {
                     photo: slave.clone(),
-                    distance: result.distance,
-                    match_percent: result.match_percent,
-                    confidence: confidence_label(result.match_percent),
-                    same_person: result.same_person,
+                    faces_detected: encodings.len(),
+                    distance: best.distance,
+                    match_percent: best.match_percent,
+                    confidence: confidence_label(best.match_percent),
+                    same_person: best.same_person,
                 });
             }
             Err(e) => errors.push(format!("{}: {e}", slave.display())),
@@ -142,13 +156,14 @@ fn main() -> ExitCode {
         }
         println!("master: {}\n", args.master.display());
         println!(
-            "{:<30} {:>10} {:>8}  {:<16}same?",
-            "photo", "distance", "match %", "confidence"
+            "{:<30} {:>6} {:>10} {:>8}  {:<16}same?",
+            "photo", "faces", "distance", "match %", "confidence"
         );
         for r in &results {
             println!(
-                "{:<30} {:>10.4} {:>7.1}%  {:<16}{}",
+                "{:<30} {:>6} {:>10.4} {:>7.1}%  {:<16}{}",
                 r.photo.display(),
+                r.faces_detected,
                 r.distance,
                 r.match_percent,
                 r.confidence,

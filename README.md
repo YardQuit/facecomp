@@ -85,10 +85,16 @@ compared against each other):
 ```
 master: master.jpg
 
-photo                            distance  match %  confidence      same?
-photo1.jpg                         0.1991    83.4%  Very likely     yes
-photo2.jpg                         0.6965    42.0%  Unlikely        no
+photo                           faces   distance  match %  confidence      same?
+photo1.jpg                        1       0.1991    83.4%  Very likely     yes
+photo2.jpg                        1       0.6965    42.0%  Unlikely        no
 ```
+
+If a slave photo has more than one person in it, `facecomp` compares
+the master against every face detected and reports the best match —
+the `faces` column shows how many faces were found, so a value above 1
+tells you the result was picked from multiple candidates rather than
+just the only face in frame.
 
 Each `--slave` value can also be a glob pattern instead of a literal
 path — useful when your shell doesn't expand wildcards itself, or

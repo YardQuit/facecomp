@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use dlib_face_recognition::{
     FaceDetector, FaceDetectorTrait, FaceEncoderNetwork, FaceEncoderTrait, FaceEncoding,
-    ImageMatrix, LandmarkPredictor, LandmarkPredictorTrait, Rectangle,
+    FaceEncodings, FaceLocations, ImageMatrix, LandmarkPredictor, LandmarkPredictorTrait,
+    Rectangle,
 };
 
 /// Euclidean distance at/below which dlib's model considers two faces the same person.
@@ -74,28 +75,49 @@ impl FaceComparer {
     /// the largest bounding box) and returns its 128-dimension embedding.
     pub fn encode_face(&self, path: impl AsRef<Path>) -> Result<FaceEncoding, FacecompError> {
         let path = path.as_ref();
+        let (faces, encodings) = self.detect(path)?;
+        let index = largest_face_index(&faces)
+            .ok_or_else(|| FacecompError::NoFaceDetected(path.to_path_buf()))?;
+        Ok(encodings[index].clone())
+    }
+
+    /// Detects every face in the image at `path` and returns one embedding
+    /// per face, in the order dlib's detector found them. Useful for photos
+    /// with more than one person in frame, where the caller wants to compare
+    /// against each face rather than assume there's only one.
+    pub fn encode_all_faces(&self, path: impl AsRef<Path>) -> Result<Vec<FaceEncoding>, FacecompError> {
+        let (_, encodings) = self.detect(path.as_ref())?;
+        Ok(encodings.to_vec())
+    }
+
+    fn detect(&self, path: &Path) -> Result<(FaceLocations, FaceEncodings), FacecompError> {
         let image = image::open(path)?.to_rgb8();
         let matrix = ImageMatrix::from_image(&image);
 
         let faces = self.detector.face_locations(&matrix);
-        let face = largest_face(&faces)
-            .ok_or_else(|| FacecompError::NoFaceDetected(path.to_path_buf()))?;
+        if faces.is_empty() {
+            return Err(FacecompError::NoFaceDetected(path.to_path_buf()));
+        }
 
-        let landmarks = self.predictor.face_landmarks(&matrix, face);
-        let encodings = self.encoder.get_face_encodings(&matrix, &[landmarks], 0);
-        encodings
-            .first()
-            .cloned()
-            .ok_or_else(|| FacecompError::NoFaceDetected(path.to_path_buf()))
+        let landmarks: Vec<_> = faces
+            .iter()
+            .map(|face| self.predictor.face_landmarks(&matrix, face))
+            .collect();
+        let encodings = self.encoder.get_face_encodings(&matrix, &landmarks, 0);
+        Ok((faces, encodings))
     }
 }
 
-fn largest_face(faces: &[Rectangle]) -> Option<&Rectangle> {
-    faces.iter().max_by_key(|r| {
-        let width = (r.right - r.left).max(0) as i64;
-        let height = (r.bottom - r.top).max(0) as i64;
-        width * height
-    })
+fn largest_face_index(faces: &[Rectangle]) -> Option<usize> {
+    faces
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, r)| {
+            let width = (r.right - r.left).max(0) as i64;
+            let height = (r.bottom - r.top).max(0) as i64;
+            width * height
+        })
+        .map(|(index, _)| index)
 }
 
 #[derive(Debug, Clone, Copy)]
