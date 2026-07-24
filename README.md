@@ -35,6 +35,11 @@ or from Emacs.
   configure. `.cargo/config.toml` in this repo already sets
   `CMAKE_POLICY_VERSION_MINIMUM=3.5` to work around it, so this should
   be transparent when building from a checkout of this repo.
+- If your toolchain is new enough that dlib's `'uint8_t' was not
+  declared in this scope` compile errors show up (recent GCC/libstdc++
+  no longer transitively pulls in `<cstdint>` the way dlib 19.24's
+  headers assume): also already handled, via `CXXFLAGS=-include cstdint`
+  in `.cargo/config.toml`.
 
 ### Build
 

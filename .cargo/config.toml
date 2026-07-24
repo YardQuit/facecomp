@@ -3,3 +3,8 @@
 # 3.5, which CMake 4.x refuses to configure at all. This tells CMake to
 # evaluate that requirement as if it said 3.5 instead of rejecting it.
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# dlib 19.24's headers use uint8_t without including <cstdint>, relying on
+# it being pulled in transitively. Newer libstdc++/GCC no longer does that
+# implicitly, so every translation unit fails with "'uint8_t' was not
+# declared". Force the include for the whole dlib build instead.
+CXXFLAGS = "-include cstdint"
