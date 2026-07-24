@@ -208,6 +208,10 @@ Load `emacs/facecomp.el` and configure it:
 (use-package facecomp
   :load-path "/path/to/facecomp/emacs"
   :custom
+  ;; Only needed if `facecomp-executable` doesn't already know where its
+  ;; own model files are - the AppImage build does, via bundled
+  ;; FACECOMP_DETECTOR_MODEL/FACECOMP_ENCODER_MODEL defaults, so if
+  ;; you're running that, leave these two unset:
   (facecomp-detector-model "/path/to/face_detection_yunet_2023mar.onnx")
   (facecomp-encoder-model "/path/to/face_recognition_sface_2021dec.onnx")
   ;; Only needed if the `facecomp` binary isn't already on PATH:

@@ -43,10 +43,13 @@
 ;;   against it.
 ;;
 ;; Setup:
-;; Set `facecomp-detector-model' and `facecomp-encoder-model' to the
-;; paths of OpenCV Zoo's model files before first use (see the README
-;; for where to get them), and make sure the `facecomp' executable is
-;; on PATH or set `facecomp-executable' to its full path.
+;; Make sure the `facecomp' executable is on PATH, or set
+;; `facecomp-executable' to its full path. If your `facecomp' doesn't
+;; already know where its model files are - e.g. it's a plain build
+;; rather than the AppImage, which bakes its own model paths in - also
+;; set `facecomp-detector-model' and `facecomp-encoder-model' to the
+;; paths of OpenCV Zoo's model files (see the README for where to get
+;; them).
 
 ;;; Code:
 
@@ -64,13 +67,21 @@
   :group 'facecomp)
 
 (defcustom facecomp-detector-model nil
-  "Path to OpenCV Zoo's `face_detection_yunet_2023mar.onnx'."
-  :type '(choice (const :tag "Not set" nil) file)
+  "Path to OpenCV Zoo's `face_detection_yunet_2023mar.onnx'.
+Leave this nil if `facecomp-executable' already knows where to find
+its own model file - the AppImage build does, via its bundled
+`FACECOMP_DETECTOR_MODEL' default - in which case the `--detector-model'
+flag is simply omitted and the executable's own default is used."
+  :type '(choice (const :tag "Let facecomp decide" nil) file)
   :group 'facecomp)
 
 (defcustom facecomp-encoder-model nil
-  "Path to OpenCV Zoo's `face_recognition_sface_2021dec.onnx'."
-  :type '(choice (const :tag "Not set" nil) file)
+  "Path to OpenCV Zoo's `face_recognition_sface_2021dec.onnx'.
+Leave this nil if `facecomp-executable' already knows where to find
+its own model file - the AppImage build does, via its bundled
+`FACECOMP_ENCODER_MODEL' default - in which case the `--encoder-model'
+flag is simply omitted and the executable's own default is used."
+  :type '(choice (const :tag "Let facecomp decide" nil) file)
   :group 'facecomp)
 
 (defcustom facecomp-threshold 0.363
@@ -79,12 +90,25 @@ Passed through to the `facecomp' executable's `--threshold' flag."
   :type 'float
   :group 'facecomp)
 
-(defun facecomp--require-models ()
-  "Signal a `user-error' unless both model paths are configured and exist."
-  (unless (and facecomp-detector-model (file-exists-p facecomp-detector-model))
-    (user-error "Set `facecomp-detector-model' to OpenCV Zoo's YuNet detector file"))
-  (unless (and facecomp-encoder-model (file-exists-p facecomp-encoder-model))
-    (user-error "Set `facecomp-encoder-model' to OpenCV Zoo's SFace recognition model file")))
+(defun facecomp--model-args ()
+  "Build the `--detector-model'/`--encoder-model' flags, if configured.
+Each is included only when its customize variable is set to an
+existing file; otherwise it's left out entirely so the executable
+falls back to its own default (e.g. the AppImage build's bundled
+models). A variable that IS set but points nowhere is treated as a
+user mistake worth catching early, rather than silently ignored."
+  (let (args)
+    (when facecomp-detector-model
+      (unless (file-exists-p facecomp-detector-model)
+        (user-error "`facecomp-detector-model' is set to `%s', which doesn't exist"
+                    facecomp-detector-model))
+      (setq args (nconc args (list "--detector-model" facecomp-detector-model))))
+    (when facecomp-encoder-model
+      (unless (file-exists-p facecomp-encoder-model)
+        (user-error "`facecomp-encoder-model' is set to `%s', which doesn't exist"
+                    facecomp-encoder-model))
+      (setq args (nconc args (list "--encoder-model" facecomp-encoder-model))))
+    args))
 
 (defun facecomp--read-targets ()
   "Prompt for a glob pattern, or, if left blank, files picked one at a time."
@@ -102,18 +126,16 @@ Passed through to the `facecomp' executable's `--threshold' flag."
 (defun facecomp--run (master targets)
   "Run the facecomp executable comparing MASTER against TARGETS.
 Returns the parsed JSON report."
-  (facecomp--require-models)
   (unless (executable-find facecomp-executable)
     (user-error "Could not find `%s' on PATH; set `facecomp-executable'"
                 facecomp-executable))
   (with-temp-buffer
-    (let* ((args (append (list "--master" master
-                                "--detector-model" facecomp-detector-model
-                                "--encoder-model" facecomp-encoder-model
-                                "--threshold" (number-to-string facecomp-threshold)
+    (let* ((args (append (list "--master" master)
+                          (facecomp--model-args)
+                          (list "--threshold" (number-to-string facecomp-threshold)
                                 "--json"
                                 "--slave")
-                         targets))
+                          targets))
            (status (apply #'call-process facecomp-executable nil t nil args))
            (output (buffer-string)))
       (condition-case _
