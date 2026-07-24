@@ -195,7 +195,7 @@ Otherwise prompts for a master photo, then either a glob pattern
             (>= (length (dired-get-marked-files)) 2))
        (let ((marked (dired-get-marked-files)))
          (list (car marked) (cdr marked)))
-     (let ((master (read-file-name "Master photo: " nil nil t)))
+     (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
        (list master (facecomp--read-targets)))))
   (when (null targets)
     (user-error "Select at least one photo to compare against the master"))
