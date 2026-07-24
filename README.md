@@ -75,11 +75,12 @@ facecomp \
   --landmark-model /path/to/shape_predictor_68_face_landmarks.dat \
   --encoder-model  /path/to/dlib_face_recognition_resnet_model_v1.dat \
   --master master.jpg \
-  photo1.jpg photo2.jpg
+  --slave photo1.jpg photo2.jpg
 ```
 
-The master is compared against each other photo (not against itself,
-and photos are not compared against each other):
+`--slave` takes one or more photos (or repeat the flag). The master is
+compared against each one (not against itself, and slaves are not
+compared against each other):
 
 ```
 master: master.jpg
@@ -89,12 +90,12 @@ photo1.jpg                         0.1991    83.4%  Very likely     yes
 photo2.jpg                         0.6965    42.0%  Unlikely        no
 ```
 
-Each target can also be a glob pattern instead of a literal path —
-useful when your shell doesn't expand wildcards itself, or you'd
-rather not rely on shell expansion at all:
+Each `--slave` value can also be a glob pattern instead of a literal
+path — useful when your shell doesn't expand wildcards itself, or
+you'd rather not rely on shell expansion at all:
 
 ```sh
-facecomp --master master.jpg --landmark-model ... --encoder-model ... "photos/*.png"
+facecomp --master master.jpg --landmark-model ... --encoder-model ... --slave "photos/*.png"
 ```
 
 (Quote the pattern so your shell passes it through literally.) If a

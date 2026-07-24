@@ -15,11 +15,12 @@ struct Args {
     #[arg(long)]
     master: PathBuf,
 
-    /// Photos to compare against the master. Each may be a literal path or
-    /// a glob pattern (e.g. "photos/*.png") - pass a pattern in quotes if
-    /// your shell doesn't expand wildcards itself.
-    #[arg(required = true)]
-    targets: Vec<String>,
+    /// A photo to compare against the master; repeat or pass multiple
+    /// values to compare several. Each may be a literal path or a glob
+    /// pattern (e.g. "photos/*.png") - pass a pattern in quotes if your
+    /// shell doesn't expand wildcards itself.
+    #[arg(long = "slave", required = true, num_args = 1..)]
+    slaves: Vec<String>,
 
     /// Path to dlib's shape_predictor_68_face_landmarks.dat.
     #[arg(long, env = "FACECOMP_LANDMARK_MODEL")]
@@ -58,7 +59,7 @@ struct Report {
 /// Expands each pattern that looks like a glob (contains `*`, `?`, or `[`)
 /// via the filesystem; everything else is taken as a literal path. The
 /// master photo is excluded in case a glob happens to sweep it up.
-fn expand_targets(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
+fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for pattern in patterns {
         if pattern.contains(['*', '?', '[']) {
@@ -92,10 +93,10 @@ fn main() -> ExitCode {
         }
     };
 
-    let targets = expand_targets(&args.master, &args.targets);
-    if targets.is_empty() {
+    let slaves = expand_slaves(&args.master, &args.slaves);
+    if slaves.is_empty() {
         eprintln!(
-            "facecomp: no target photos found (after expanding glob patterns and excluding the master)"
+            "facecomp: no slave photos found (after expanding glob patterns and excluding the master)"
         );
         return ExitCode::FAILURE;
     }
@@ -111,19 +112,19 @@ fn main() -> ExitCode {
     };
 
     let mut results = Vec::new();
-    for target in &targets {
-        match comparer.encode_face(target) {
+    for slave in &slaves {
+        match comparer.encode_face(slave) {
             Ok(encoding) => {
                 let result = compare(&master_encoding, &encoding, args.threshold);
                 results.push(MasterComparison {
-                    photo: target.clone(),
+                    photo: slave.clone(),
                     distance: result.distance,
                     match_percent: result.match_percent,
                     confidence: confidence_label(result.match_percent),
                     same_person: result.same_person,
                 });
             }
-            Err(e) => errors.push(format!("{}: {e}", target.display())),
+            Err(e) => errors.push(format!("{}: {e}", slave.display())),
         }
     }
 

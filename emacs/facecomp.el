@@ -111,7 +111,8 @@ Returns the parsed JSON report."
                                 "--landmark-model" facecomp-landmark-model
                                 "--encoder-model" facecomp-encoder-model
                                 "--threshold" (number-to-string facecomp-threshold)
-                                "--json")
+                                "--json"
+                                "--slave")
                          targets))
            (status (apply #'call-process facecomp-executable nil t nil args))
            (output (buffer-string)))
