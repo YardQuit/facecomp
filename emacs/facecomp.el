@@ -27,16 +27,20 @@
 ;;; Commentary:
 ;; Emacs frontend for the `facecomp' command-line tool (the Rust crate
 ;; in this repository).  `facecomp' detects the most prominent face in
-;; each photo, computes a 128-dimension embedding with dlib, and reports
-;; a distance-based percentage match between every pair of photos.
+;; a master photo and in each of one or more other photos, computes a
+;; 128-dimension embedding for each with dlib, and reports a
+;; distance-based percentage match plus a qualitative confidence label
+;; between the master and every other photo.
 ;;
 ;; `facecomp' itself works standalone from a shell; this file just
 ;; shells out to it and renders the result in an Emacs buffer.
 ;;
 ;; Usage:
-;; - `M-x facecomp-compare' prompts for two or more image files.
-;; - Called from Dired with two or more files marked, it compares the
-;;   marked files instead of prompting.
+;; - `M-x facecomp-compare' prompts for a master photo, then either a
+;;   glob pattern (e.g. "*.png") or image files picked one at a time.
+;; - Called from Dired with two or more files marked, the first marked
+;;   file is used as the master and the rest as the photos to compare
+;;   against it.
 ;;
 ;; Setup:
 ;; Set `facecomp-landmark-model' and `facecomp-encoder-model' to the
@@ -82,27 +86,33 @@ Passed through to the `facecomp' executable's `--threshold' flag."
   (unless (and facecomp-encoder-model (file-exists-p facecomp-encoder-model))
     (user-error "Set `facecomp-encoder-model' to dlib's face recognition model file")))
 
-(defun facecomp--read-image-files ()
-  "Prompt for two or more existing image files and return them as a list."
-  (let ((files (list (read-file-name "Image file 1: " nil nil t)
-                      (read-file-name "Image file 2: " nil nil t))))
-    (while (y-or-n-p (format "Add another image (%d selected so far)? " (length files)))
-      (push (read-file-name (format "Image file %d: " (1+ (length files))) nil nil t)
-            files))
-    (mapcar #'expand-file-name (nreverse files))))
+(defun facecomp--read-targets ()
+  "Prompt for a glob pattern, or, if left blank, files picked one at a time."
+  (let ((pattern (read-string
+                  "Photos to compare against master (glob, e.g. *.png; blank to pick one at a time): ")))
+    (if (not (string-empty-p pattern))
+        (or (file-expand-wildcards pattern t)
+            (user-error "No files matched `%s'" pattern))
+      (let (files)
+        (push (read-file-name "Photo: " nil nil t) files)
+        (while (y-or-n-p (format "Add another photo (%d selected so far)? " (length files)))
+          (push (read-file-name (format "Photo %d: " (1+ (length files))) nil nil t) files))
+        (mapcar #'expand-file-name (nreverse files))))))
 
-(defun facecomp--run (files)
-  "Run the facecomp executable on FILES and return the parsed JSON report."
+(defun facecomp--run (master targets)
+  "Run the facecomp executable comparing MASTER against TARGETS.
+Returns the parsed JSON report."
   (facecomp--require-models)
   (unless (executable-find facecomp-executable)
     (user-error "Could not find `%s' on PATH; set `facecomp-executable'"
                 facecomp-executable))
   (with-temp-buffer
-    (let* ((args (append (list "--landmark-model" facecomp-landmark-model
+    (let* ((args (append (list "--master" master
+                                "--landmark-model" facecomp-landmark-model
                                 "--encoder-model" facecomp-encoder-model
                                 "--threshold" (number-to-string facecomp-threshold)
                                 "--json")
-                         files))
+                         targets))
            (status (apply #'call-process facecomp-executable nil t nil args))
            (output (buffer-string)))
       (condition-case _
@@ -112,7 +122,7 @@ Passed through to the `facecomp' executable's `--threshold' flag."
 (defun facecomp--percent-face (percent)
   "Return a face symbol reflecting how confident a PERCENT match is."
   (cond ((>= percent 80) 'success)
-        ((>= percent 50) 'warning)
+        ((>= percent 45) 'warning)
         (t 'error)))
 
 (defun facecomp--render (report)
@@ -121,20 +131,21 @@ Passed through to the `facecomp' executable's `--threshold' flag."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
+        (insert (format "master: %s\n\n" (alist-get 'master report)))
         (dolist (err (alist-get 'errors report))
           (insert (propertize (format "warning: %s\n" err) 'face 'warning)))
         (when (alist-get 'errors report)
           (insert "\n"))
-        (let ((pairs (alist-get 'pairs report)))
-          (if (null pairs)
-              (insert "No comparable pairs (see warnings above).\n")
-            (dolist (pair pairs)
-              (let ((a (alist-get 'image_a pair))
-                    (b (alist-get 'image_b pair))
-                    (pct (alist-get 'match_percent pair))
-                    (same (alist-get 'same_person pair)))
-                (insert (format "%s\n  vs %s\n  " a b))
-                (insert (propertize (format "%.1f%% match" pct)
+        (let ((results (alist-get 'results report)))
+          (if (null results)
+              (insert "No comparable photos (see warnings above).\n")
+            (dolist (r results)
+              (let ((photo (alist-get 'photo r))
+                    (pct (alist-get 'match_percent r))
+                    (confidence (alist-get 'confidence r))
+                    (same (alist-get 'same_person r)))
+                (insert (format "%s\n  " photo))
+                (insert (propertize (format "%.1f%% match — %s" pct confidence)
                                      'face (facecomp--percent-face pct)))
                 (insert (format " (%s)\n\n"
                                 (if (eq same t) "same person" "different people")))))))
@@ -143,18 +154,25 @@ Passed through to the `facecomp' executable's `--threshold' flag."
     (display-buffer buf)))
 
 ;;;###autoload
-(defun facecomp-compare (files)
-  "Compare two or more image FILES and show a percentage match per pair.
-When called from a Dired buffer with two or more files marked, compares
-those files.  Otherwise prompts for image files interactively."
+(defun facecomp-compare (master targets)
+  "Compare MASTER against each of TARGETS and show a percentage match.
+Each result also gets a qualitative confidence label (Almost certain,
+Very likely, Likely, ...).
+
+When called from a Dired buffer with two or more files marked, the
+first marked file is used as MASTER and the rest as TARGETS.
+Otherwise prompts for a master photo, then either a glob pattern
+\(e.g. \"*.png\"\) or photos picked one at a time."
   (interactive
-   (list (if (and (derived-mode-p 'dired-mode)
-                  (>= (length (dired-get-marked-files)) 2))
-             (dired-get-marked-files)
-           (facecomp--read-image-files))))
-  (when (< (length files) 2)
-    (user-error "Select at least two images"))
-  (facecomp--render (facecomp--run files)))
+   (if (and (derived-mode-p 'dired-mode)
+            (>= (length (dired-get-marked-files)) 2))
+       (let ((marked (dired-get-marked-files)))
+         (list (car marked) (cdr marked)))
+     (let ((master (read-file-name "Master photo: " nil nil t)))
+       (list master (facecomp--read-targets)))))
+  (when (null targets)
+    (user-error "Select at least one photo to compare against the master"))
+  (facecomp--render (facecomp--run master targets)))
 
 (provide 'facecomp)
 

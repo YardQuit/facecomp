@@ -124,3 +124,18 @@ pub fn distance_to_percent(distance: f64, threshold: f64) -> f64 {
     let percent = 100.0 * (1.0 - distance / (2.0 * threshold));
     percent.clamp(0.0, 100.0)
 }
+
+/// Maps a match percentage onto the standard intelligence-community words-of-
+/// estimative-probability yardstick (the same bands used in ICD 203), so a
+/// reader gets a qualitative call alongside the raw number.
+pub fn confidence_label(match_percent: f64) -> &'static str {
+    match match_percent {
+        p if p >= 95.0 => "Almost certain",
+        p if p >= 80.0 => "Very likely",
+        p if p >= 55.0 => "Likely",
+        p if p >= 45.0 => "Even chance",
+        p if p >= 20.0 => "Unlikely",
+        p if p >= 5.0 => "Very unlikely",
+        _ => "Almost no chance",
+    }
+}

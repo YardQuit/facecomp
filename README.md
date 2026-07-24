@@ -1,16 +1,19 @@
 # facecomp
 
-Compare faces across two or more photos and get a distance-based
-percentage match per pair — usable as a standalone command-line tool,
-or from Emacs.
+Compare a master photo against one or more other photos and get a
+distance-based percentage match plus a qualitative confidence label
+for each — usable as a standalone command-line tool, or from Emacs.
 
 ## How it works
 
-- `facecomp` (Rust) detects the most prominent face in each photo,
-  computes a 128-dimension face embedding for it using dlib, and
-  reports the Euclidean distance between every pair of embeddings.
-  Distance is mapped onto a 0-100% "match" heuristic (see
-  [Interpreting the percentage](#interpreting-the-percentage)).
+- `facecomp` (Rust) detects the most prominent face in the master
+  photo and in each other photo, computes a 128-dimension face
+  embedding for each using dlib, and reports the Euclidean distance
+  between the master's embedding and every other photo's. Distance is
+  mapped onto a 0-100% "match" heuristic (see
+  [Interpreting the percentage](#interpreting-the-percentage)) and
+  onto a qualitative confidence label (see
+  [Confidence labels](#confidence-labels)).
 - `emacs/facecomp.el` is a thin frontend: it shells out to the
   `facecomp` binary and renders the JSON result in an Emacs buffer.
   The Rust binary does not depend on Emacs in any way.
@@ -71,17 +74,32 @@ face-recognition ResNet model still has to come from dlib.net.
 facecomp \
   --landmark-model /path/to/shape_predictor_68_face_landmarks.dat \
   --encoder-model  /path/to/dlib_face_recognition_resnet_model_v1.dat \
-  photo1.jpg photo2.jpg photo3.jpg
+  --master master.jpg \
+  photo1.jpg photo2.jpg
 ```
 
-Every pair among the given images is compared:
+The master is compared against each other photo (not against itself,
+and photos are not compared against each other):
 
 ```
-image A                        image B                          distance  match %  same?
-photo1.jpg                     photo2.jpg                         0.1991    83.4%  yes
-photo1.jpg                     photo3.jpg                         0.6965    42.0%  no
-photo2.jpg                     photo3.jpg                         0.7143    40.5%  no
+master: master.jpg
+
+photo                            distance  match %  confidence      same?
+photo1.jpg                         0.1991    83.4%  Very likely     yes
+photo2.jpg                         0.6965    42.0%  Unlikely        no
 ```
+
+Each target can also be a glob pattern instead of a literal path —
+useful when your shell doesn't expand wildcards itself, or you'd
+rather not rely on shell expansion at all:
+
+```sh
+facecomp --master master.jpg --landmark-model ... --encoder-model ... "photos/*.png"
+```
+
+(Quote the pattern so your shell passes it through literally.) If a
+glob happens to match the master photo itself, it's excluded
+automatically.
 
 Model paths can also come from environment variables instead of flags:
 `FACECOMP_LANDMARK_MODEL` and `FACECOMP_ENCODER_MODEL`.
@@ -94,8 +112,8 @@ Other flags:
 - `--json` — emit a machine-readable JSON report instead of the table
   above (this is what `facecomp.el` uses).
 
-Exit status is non-zero if any image failed (typically: no face was
-detected in it).
+Exit status is non-zero if any photo failed (typically: no face was
+detected in it, or a glob matched nothing).
 
 ### Interpreting the percentage
 
@@ -111,6 +129,27 @@ match% = clamp(100 * (1 - distance / (2 * threshold)), 0, 100)
 It is not a calibrated probability of "same person" — treat it as a
 convenient, threshold-centered readout of the underlying distance, not
 ground truth.
+
+### Confidence labels
+
+Alongside the raw percentage, each result also gets a qualitative
+label from the intelligence-community "words of estimative
+probability" yardstick (the same bands used in ICD 203):
+
+| Label                        | Match %  |
+|-------------------------------|---------|
+| Almost certain / Nearly certain | 95-99%  |
+| Very likely / Highly likely     | 80-95%  |
+| Likely / probable               | 55-80%  |
+| Even chance / roughly           | 45-55%  |
+| Unlikely / improbable           | 20-45%  |
+| Very unlikely / Highly unlikely | 5-20%   |
+| Almost no chance / remote       | 1-5%    |
+
+The bands overlap at their edges in the original yardstick; `facecomp`
+resolves that with non-overlapping cutoffs (`>= 95`, `>= 80`, `>= 55`,
+`>= 45`, `>= 20`, `>= 5`, else the bottom band) so every percentage
+maps to exactly one label.
 
 ## Emacs usage
 
@@ -128,12 +167,15 @@ Load `emacs/facecomp.el` and configure it:
 
 Then:
 
-- `M-x facecomp-compare` prompts for two or more image files.
+- `M-x facecomp-compare` prompts for a master photo, then either a
+  glob pattern (e.g. `*.png`) or photos to compare against it picked
+  one at a time.
 - Or mark two or more files in Dired and run `M-x facecomp-compare` —
-  it compares the marked files instead of prompting.
+  the first marked file becomes the master, the rest are compared
+  against it.
 
-Results are shown in a `*facecomp*` buffer, one pair per entry, with
-the match percentage colored by confidence.
+Results are shown in a `*facecomp*` buffer, one photo per entry, with
+the match percentage and confidence label colored by confidence.
 
 ## License
 
