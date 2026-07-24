@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use serde::Serialize;
 
-use facecomp::{compare, confidence_label, FaceComparer, DEFAULT_THRESHOLD};
+use facecomp::{confidence_label, FaceComparer, DEFAULT_THRESHOLD};
 
 /// Compare a master photo against one or more other photos and report a
 /// percentage match plus a qualitative confidence label for each.
@@ -27,15 +27,15 @@ struct Args {
     #[arg(long = "slave", required = true, num_args = 1..)]
     slaves: Vec<String>,
 
-    /// Path to dlib's shape_predictor_68_face_landmarks.dat.
-    #[arg(long, env = "FACECOMP_LANDMARK_MODEL")]
-    landmark_model: PathBuf,
+    /// Path to OpenCV Zoo's face_detection_yunet_2023mar.onnx.
+    #[arg(long, env = "FACECOMP_DETECTOR_MODEL")]
+    detector_model: PathBuf,
 
-    /// Path to dlib's dlib_face_recognition_resnet_model_v1.dat.
+    /// Path to OpenCV Zoo's face_recognition_sface_2021dec.onnx.
     #[arg(long, env = "FACECOMP_ENCODER_MODEL")]
     encoder_model: PathBuf,
 
-    /// Euclidean distance at/below which two faces count as the same person.
+    /// Cosine similarity at/above which two faces count as the same person.
     #[arg(long, default_value_t = DEFAULT_THRESHOLD)]
     threshold: f64,
 
@@ -48,7 +48,7 @@ struct Args {
 struct MasterComparison {
     photo: PathBuf,
     faces_detected: usize,
-    distance: f64,
+    similarity: f64,
     match_percent: f64,
     confidence: &'static str,
     same_person: bool,
@@ -91,7 +91,7 @@ fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
 fn main() -> ExitCode {
     let args = Args::parse();
 
-    let comparer = match FaceComparer::new(&args.landmark_model, &args.encoder_model) {
+    let mut comparer = match FaceComparer::new(&args.detector_model, &args.encoder_model) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("facecomp: {e}");
@@ -124,19 +124,27 @@ fn main() -> ExitCode {
                 // A slave photo may contain more than one person; compare the
                 // master against every face found and keep the best match,
                 // rather than assuming there's only one face in frame.
-                let best = encodings
+                let comparisons: Result<Vec<_>, _> = encodings
                     .iter()
-                    .map(|encoding| compare(&master_encoding, encoding, args.threshold))
-                    .max_by(|a, b| a.match_percent.total_cmp(&b.match_percent))
-                    .expect("encode_all_faces never returns an empty Vec on success");
-                results.push(MasterComparison {
-                    photo: slave.clone(),
-                    faces_detected: encodings.len(),
-                    distance: best.distance,
-                    match_percent: best.match_percent,
-                    confidence: confidence_label(best.match_percent),
-                    same_person: best.same_person,
-                });
+                    .map(|encoding| comparer.compare(&master_encoding, encoding, args.threshold))
+                    .collect();
+                match comparisons {
+                    Ok(comparisons) => {
+                        let best = comparisons
+                            .into_iter()
+                            .max_by(|a, b| a.match_percent.total_cmp(&b.match_percent))
+                            .expect("encode_all_faces never returns an empty Vec on success");
+                        results.push(MasterComparison {
+                            photo: slave.clone(),
+                            faces_detected: encodings.len(),
+                            similarity: best.similarity,
+                            match_percent: best.match_percent,
+                            confidence: confidence_label(best.match_percent),
+                            same_person: best.same_person,
+                        });
+                    }
+                    Err(e) => errors.push(format!("{}: {e}", slave.display())),
+                }
             }
             Err(e) => errors.push(format!("{}: {e}", slave.display())),
         }
@@ -157,14 +165,14 @@ fn main() -> ExitCode {
         println!("master: {}\n", args.master.display());
         println!(
             "{:<30} {:>6} {:>10} {:>8}  {:<16}same?",
-            "photo", "faces", "distance", "match %", "confidence"
+            "photo", "faces", "similarity", "match %", "confidence"
         );
         for r in &results {
             println!(
                 "{:<30} {:>6} {:>10.4} {:>7.1}%  {:<16}{}",
                 r.photo.display(),
                 r.faces_detected,
-                r.distance,
+                r.similarity,
                 r.match_percent,
                 r.confidence,
                 if r.same_person { "yes" } else { "no" }

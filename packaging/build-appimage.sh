@@ -1,23 +1,28 @@
 #!/bin/bash
 # Build a self-contained facecomp-x86_64.AppImage: the compiled binary, its
-# shared library dependencies (BLAS/LAPACK/dlib/libjpeg/libpng/...), and both
-# dlib model files, bundled into one file that runs without needing any of
-# those installed on the target machine.
+# shared library dependencies (OpenCV/libjpeg/libpng/...), and both ONNX
+# model files, bundled into one file that runs without needing any of those
+# installed on the target machine.
 #
 # Usage:
-#   ./packaging/build-appimage.sh /path/to/shape_predictor_68_face_landmarks.dat /path/to/dlib_face_recognition_resnet_model_v1.dat
+#   ./packaging/build-appimage.sh /path/to/face_detection_yunet_2023mar.onnx /path/to/face_recognition_sface_2021dec.onnx
 #
-# Requires: cargo build --release already run (or this script runs it for
-# you), and network access the first time to fetch linuxdeploy/appimagetool.
+# Requires: an OpenCV 4.10+ build discoverable via pkg-config (PKG_CONFIG_PATH
+# pointing at its lib/pkgconfig directory) and its shared libraries on
+# LD_LIBRARY_PATH - see the README for why OpenCV older than ~4.10 won't work.
+# `cargo build --release` links against that OpenCV, and linuxdeploy's
+# dependency scan below needs the same LD_LIBRARY_PATH to find its .so files
+# to bundle. Also needs network access the first time to fetch
+# linuxdeploy/appimagetool.
 
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <landmark-model.dat> <encoder-model.dat>" >&2
+  echo "usage: $0 <detector-model.onnx> <encoder-model.onnx>" >&2
   exit 1
 fi
 
-landmark_model="$1"
+detector_model="$1"
 encoder_model="$2"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work_dir="$(mktemp -d)"
@@ -54,8 +59,8 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
   "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/facecomp/models"
 
 cp "$repo_root/target/release/facecomp" "$appdir/usr/bin/facecomp"
-cp "$landmark_model" "$appdir/usr/share/facecomp/models/shape_predictor_68_face_landmarks.dat"
-cp "$encoder_model" "$appdir/usr/share/facecomp/models/dlib_face_recognition_resnet_model_v1.dat"
+cp "$detector_model" "$appdir/usr/share/facecomp/models/face_detection_yunet_2023mar.onnx"
+cp "$encoder_model" "$appdir/usr/share/facecomp/models/face_recognition_sface_2021dec.onnx"
 
 cat > "$appdir/usr/share/applications/facecomp.desktop" <<'EOF'
 [Desktop Entry]
@@ -88,8 +93,8 @@ cat > "$appdir/AppRun" <<'EOF'
 set -e
 HERE="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export FACECOMP_LANDMARK_MODEL="${FACECOMP_LANDMARK_MODEL:-$HERE/usr/share/facecomp/models/shape_predictor_68_face_landmarks.dat}"
-export FACECOMP_ENCODER_MODEL="${FACECOMP_ENCODER_MODEL:-$HERE/usr/share/facecomp/models/dlib_face_recognition_resnet_model_v1.dat}"
+export FACECOMP_DETECTOR_MODEL="${FACECOMP_DETECTOR_MODEL:-$HERE/usr/share/facecomp/models/face_detection_yunet_2023mar.onnx}"
+export FACECOMP_ENCODER_MODEL="${FACECOMP_ENCODER_MODEL:-$HERE/usr/share/facecomp/models/face_recognition_sface_2021dec.onnx}"
 exec "$HERE/usr/bin/facecomp" "$@"
 EOF
 chmod +x "$appdir/AppRun"
