@@ -1,0 +1,5 @@
+[env]
+# dlib 19.24's bundled CMakeLists.txt requires a CMake version older than
+# 3.5, which CMake 4.x refuses to configure at all. This tells CMake to
+# evaluate that requirement as if it said 3.5 instead of rejecting it.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

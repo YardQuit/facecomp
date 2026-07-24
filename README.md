@@ -30,6 +30,11 @@ or from Emacs.
 - Roughly 200 MB of disk and a few minutes of CPU time — the first
   build compiles dlib from source (via the `dlib-face-recognition`
   crate's `build-native` feature).
+- If your CMake is version 4.x: dlib 19.24's bundled `CMakeLists.txt`
+  requires a CMake version older than 3.5, which CMake 4.x refuses to
+  configure. `.cargo/config.toml` in this repo already sets
+  `CMAKE_POLICY_VERSION_MINIMUM=3.5` to work around it, so this should
+  be transparent when building from a checkout of this repo.
 
 ### Build
 
