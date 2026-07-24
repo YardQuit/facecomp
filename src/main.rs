@@ -13,7 +13,7 @@ use facecomp::{compare, confidence_label, FaceComparer, DEFAULT_THRESHOLD};
     name = "facecomp",
     version,
     about = "Compare a master photo against one or more other photos and report a percentage match plus a confidence label for each",
-    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found."
+    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found."
 )]
 struct Args {
     /// The reference photo every other photo is compared against.

@@ -150,6 +150,8 @@ pub fn distance_to_percent(distance: f64, threshold: f64) -> f64 {
 /// Maps a match percentage onto the standard intelligence-community words-of-
 /// estimative-probability yardstick (the same bands used in ICD 203), so a
 /// reader gets a qualitative call alongside the raw number.
+///
+/// Publisher: Office of the Director of National Intelligence (ODNI).
 pub fn confidence_label(match_percent: f64) -> &'static str {
     match match_percent {
         p if p >= 95.0 => "Almost certain",

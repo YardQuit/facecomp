@@ -143,6 +143,8 @@ Alongside the raw percentage, each result also gets a qualitative
 label from the intelligence-community "words of estimative
 probability" yardstick (the same bands used in ICD 203):
 
+> Publisher: Office of the Director of National Intelligence (ODNI)
+
 | Label                        | Match %  |
 |-------------------------------|---------|
 | Almost certain / Nearly certain | 95-99%  |
