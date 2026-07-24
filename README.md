@@ -224,8 +224,11 @@ Then:
   glob pattern (e.g. `*.png`) or photos to compare against it picked
   one at a time.
 - Or mark two or more files in Dired and run `M-x facecomp-compare` —
-  the first marked file becomes the master, the rest are compared
-  against it.
+  you'll be prompted for which of the marked files is the master
+  (defaulting to the topmost one in the Dired listing), and the rest
+  are compared against it. This is a real prompt rather than "whichever
+  one you marked first," since Dired itself doesn't track marking
+  order - only buffer order.
 
 Results are shown in a `*facecomp*` buffer, one photo per entry, with
 the match percentage and confidence label colored by confidence.

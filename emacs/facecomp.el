@@ -177,21 +177,33 @@ Returns the parsed JSON report."
         (special-mode)))
     (display-buffer buf)))
 
+(defun facecomp--choose-master (marked)
+  "Prompt for which file in MARKED is the master; return (MASTER TARGETS).
+MARKED's own ordering is Dired's buffer order, not the order the
+files were actually marked in - Dired doesn't track that at all - so
+this always asks explicitly rather than guessing from position."
+  (let* ((candidates (mapcar (lambda (f) (cons (file-name-nondirectory f) f)) marked))
+         (choice (completing-read
+                  (format "Master photo (of %d marked): " (length marked))
+                  candidates nil t nil nil (caar candidates)))
+         (master (alist-get choice candidates nil nil #'string=)))
+    (list master (remove master marked))))
+
 ;;;###autoload
 (defun facecomp-compare (master targets)
   "Compare MASTER against each of TARGETS and show a percentage match.
 Each result also gets a qualitative confidence label (Almost certain,
 Very likely, Likely, ...).
 
-When called from a Dired buffer with two or more files marked, the
-first marked file is used as MASTER and the rest as TARGETS.
-Otherwise prompts for a master photo, then either a glob pattern
-\(e.g. \"*.png\"\) or photos picked one at a time."
+When called from a Dired buffer with two or more files marked, prompts
+for which of the marked files is MASTER (defaulting to the topmost one
+in the buffer) and uses the rest as TARGETS. Otherwise prompts for a
+master photo, then either a glob pattern \(e.g. \"*.png\"\) or photos
+picked one at a time."
   (interactive
    (if (and (derived-mode-p 'dired-mode)
             (>= (length (dired-get-marked-files)) 2))
-       (let ((marked (dired-get-marked-files)))
-         (list (car marked) (cdr marked)))
+       (facecomp--choose-master (dired-get-marked-files))
      (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
        (list master (facecomp--read-targets)))))
   (when (null targets)
