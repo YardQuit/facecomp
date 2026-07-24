@@ -2,6 +2,7 @@
 name = "facecomp"
 version = "0.1.0"
 edition = "2021"
+authors = ["Michael Jones <yardquit@pm.me>"]
 license = "GPL-3.0-or-later"
 description = "Compare faces across photos and report a percentage match, usable standalone or from Emacs"
 repository = "https://github.com/YardQuit/facecomp"
