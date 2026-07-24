@@ -22,27 +22,65 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake build-essential libopenblas-dev liblapack-dev
+          sudo apt-get install -y -qq cmake build-essential clang libclang-dev \
+            libjpeg-dev libpng-dev libtiff-dev libwebp-dev zlib1g-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Cache dlib model files
+      # OpenCV older than ~4.10 (including every version Ubuntu's own apt
+      # repos ship) fails at *runtime* trying to load the YuNet detector
+      # model below - see the README's system requirements section - so a
+      # modern OpenCV has to be built from source. Minimal module set to
+      # keep this from-source build's time down; cached across runs since
+      # it's the same version/config every time.
+      - name: Cache OpenCV build
+        id: cache-opencv
+        uses: actions/cache@v4
+        with:
+          path: opencv-install
+          key: opencv-4.10.0-objdetect-dnn-v1
+
+      - name: Build OpenCV from source
+        if: steps.cache-opencv.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 4.10.0 https://github.com/opencv/opencv.git /tmp/opencv-src
+          cmake -S /tmp/opencv-src -B /tmp/opencv-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/opencv-install" \
+            -DBUILD_LIST=core,imgproc,imgcodecs,objdetect,dnn \
+            -DBUILD_SHARED_LIBS=ON \
+            -DOPENCV_GENERATE_PKGCONFIG=ON \
+            -DBUILD_opencv_python2=OFF -DBUILD_opencv_python3=OFF \
+            -DBUILD_JAVA=OFF -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF \
+            -DWITH_GTK=OFF -DWITH_QT=OFF -DWITH_FFMPEG=OFF -DWITH_1394=OFF \
+            -DWITH_GSTREAMER=OFF -DWITH_OPENEXR=OFF -DWITH_TBB=OFF \
+            -DWITH_IPP=OFF -DWITH_CUDA=OFF
+          cmake --build /tmp/opencv-build -j"$(nproc)" --target install
+          rm -rf /tmp/opencv-src /tmp/opencv-build
+
+      - name: Export OpenCV environment
+        run: |
+          echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/opencv-install/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/opencv-install/lib" >> "$GITHUB_ENV"
+
+      - name: Cache OpenCV Zoo model files
         id: cache-models
         uses: actions/cache@v4
         with:
           path: models
-          key: dlib-models-v1
+          key: opencv-zoo-models-v1
 
-      - name: Download dlib model files
+      - name: Download OpenCV Zoo model files
         if: steps.cache-models.outputs.cache-hit != 'true'
         run: |
           mkdir -p models
-          curl -sSL -o /tmp/landmarks.dat.bz2 http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
-          curl -sSL -o /tmp/encoder.dat.bz2 http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2
-          bunzip2 -c /tmp/landmarks.dat.bz2 > models/shape_predictor_68_face_landmarks.dat
-          bunzip2 -c /tmp/encoder.dat.bz2 > models/dlib_face_recognition_resnet_model_v1.dat
+          curl -sSL -o models/face_detection_yunet_2023mar.onnx \
+            https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+          curl -sSL -o models/face_recognition_sface_2021dec.onnx \
+            https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
 
       - name: Cache packaging tools (linuxdeploy/appimagetool)
         uses: actions/cache@v4
@@ -53,8 +91,8 @@ jobs:
       - name: Build AppImage
         run: |
           ./packaging/build-appimage.sh \
-            models/shape_predictor_68_face_landmarks.dat \
-            models/dlib_face_recognition_resnet_model_v1.dat
+            models/face_detection_yunet_2023mar.onnx \
+            models/face_recognition_sface_2021dec.onnx
 
       - name: Smoke-test the AppImage
         run: ./facecomp-x86_64.AppImage --appimage-extract-and-run --help

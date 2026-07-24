@@ -28,8 +28,8 @@
 ;; Emacs frontend for the `facecomp' command-line tool (the Rust crate
 ;; in this repository).  `facecomp' detects the most prominent face in
 ;; a master photo and in each of one or more other photos, computes a
-;; 128-dimension embedding for each with dlib, and reports a
-;; distance-based percentage match plus a qualitative confidence label
+;; 128-dimension embedding for each with OpenCV's SFace, and reports a
+;; similarity-based percentage match plus a qualitative confidence label
 ;; between the master and every other photo.
 ;;
 ;; `facecomp' itself works standalone from a shell; this file just
@@ -43,10 +43,10 @@
 ;;   against it.
 ;;
 ;; Setup:
-;; Set `facecomp-landmark-model' and `facecomp-encoder-model' to the
-;; paths of dlib's model files before first use (see the README for
-;; where to get them), and make sure the `facecomp' executable is on
-;; PATH or set `facecomp-executable' to its full path.
+;; Set `facecomp-detector-model' and `facecomp-encoder-model' to the
+;; paths of OpenCV Zoo's model files before first use (see the README
+;; for where to get them), and make sure the `facecomp' executable is
+;; on PATH or set `facecomp-executable' to its full path.
 
 ;;; Code:
 
@@ -63,28 +63,28 @@
   :type 'string
   :group 'facecomp)
 
-(defcustom facecomp-landmark-model nil
-  "Path to dlib's `shape_predictor_68_face_landmarks.dat'."
+(defcustom facecomp-detector-model nil
+  "Path to OpenCV Zoo's `face_detection_yunet_2023mar.onnx'."
   :type '(choice (const :tag "Not set" nil) file)
   :group 'facecomp)
 
 (defcustom facecomp-encoder-model nil
-  "Path to dlib's `dlib_face_recognition_resnet_model_v1.dat'."
+  "Path to OpenCV Zoo's `face_recognition_sface_2021dec.onnx'."
   :type '(choice (const :tag "Not set" nil) file)
   :group 'facecomp)
 
-(defcustom facecomp-threshold 0.6
-  "Euclidean distance at/below which two faces count as the same person.
+(defcustom facecomp-threshold 0.363
+  "Cosine similarity at/above which two faces count as the same person.
 Passed through to the `facecomp' executable's `--threshold' flag."
   :type 'float
   :group 'facecomp)
 
 (defun facecomp--require-models ()
   "Signal a `user-error' unless both model paths are configured and exist."
-  (unless (and facecomp-landmark-model (file-exists-p facecomp-landmark-model))
-    (user-error "Set `facecomp-landmark-model' to dlib's shape predictor file"))
+  (unless (and facecomp-detector-model (file-exists-p facecomp-detector-model))
+    (user-error "Set `facecomp-detector-model' to OpenCV Zoo's YuNet detector file"))
   (unless (and facecomp-encoder-model (file-exists-p facecomp-encoder-model))
-    (user-error "Set `facecomp-encoder-model' to dlib's face recognition model file")))
+    (user-error "Set `facecomp-encoder-model' to OpenCV Zoo's SFace recognition model file")))
 
 (defun facecomp--read-targets ()
   "Prompt for a glob pattern, or, if left blank, files picked one at a time."
@@ -108,7 +108,7 @@ Returns the parsed JSON report."
                 facecomp-executable))
   (with-temp-buffer
     (let* ((args (append (list "--master" master
-                                "--landmark-model" facecomp-landmark-model
+                                "--detector-model" facecomp-detector-model
                                 "--encoder-model" facecomp-encoder-model
                                 "--threshold" (number-to-string facecomp-threshold)
                                 "--json"

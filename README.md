@@ -6,11 +6,11 @@ for each — usable as a standalone command-line tool, or from Emacs.
 
 ## How it works
 
-- `facecomp` (Rust) detects the most prominent face in the master
-  photo and in each other photo, computes a 128-dimension face
-  embedding for each using dlib, and reports the Euclidean distance
-  between the master's embedding and every other photo's. Distance is
-  mapped onto a 0-100% "match" heuristic (see
+- `facecomp` (Rust) detects every face in the master photo and in each
+  other photo using OpenCV's YuNet detector, computes a 128-dimension
+  face embedding for each using OpenCV's SFace, and reports the cosine
+  similarity between the master's embedding and every other photo's.
+  Similarity is mapped onto a 0-100% "match" heuristic (see
   [Interpreting the percentage](#interpreting-the-percentage)) and
   onto a qualitative confidence label (see
   [Confidence labels](#confidence-labels)).
@@ -22,27 +22,21 @@ for each — usable as a standalone command-line tool, or from Emacs.
 
 ### System requirements
 
-- Rust (stable).
-- `cmake`, a C++ compiler, and BLAS/LAPACK development headers, needed
-  to compile dlib itself. On Debian/Ubuntu:
+- Rust (stable) and Clang/libclang (needed by the `opencv` crate to
+  generate bindings).
+- OpenCV **4.10 or newer**, with the `objdetect` and `dnn` modules, plus
+  their headers (`libopencv-dev` or equivalent).
 
-  ```sh
-  sudo apt-get install cmake build-essential libopenblas-dev liblapack-dev
-  ```
-
-- Roughly 200 MB of disk and a few minutes of CPU time — the first
-  build compiles dlib from source (via the `dlib-face-recognition`
-  crate's `build-native` feature).
-- If your CMake is version 4.x: dlib 19.24's bundled `CMakeLists.txt`
-  requires a CMake version older than 3.5, which CMake 4.x refuses to
-  configure. `.cargo/config.toml` in this repo already sets
-  `CMAKE_POLICY_VERSION_MINIMUM=3.5` to work around it, so this should
-  be transparent when building from a checkout of this repo.
-- If your toolchain is new enough that dlib's `'uint8_t' was not
-  declared in this scope` compile errors show up (recent GCC/libstdc++
-  no longer transitively pulls in `<cstdint>` the way dlib 19.24's
-  headers assume): also already handled, via `CXXFLAGS=-include cstdint`
-  in `.cargo/config.toml`.
+  **Important:** OpenCV older than roughly 4.10 (including the
+  `libopencv-dev` 4.6.0 that Ubuntu 24.04's own apt repos ship) cannot
+  load the YuNet detector model at all — it fails at runtime with a
+  DNN importer error (`Layer with requested id=-1 not found`), not at
+  build time, so this is easy to miss until you actually run the
+  binary. This is why `packaging/build-appimage.sh` and the AppImage CI
+  workflow build OpenCV from source instead of using the distro
+  package. If you build `facecomp` outside that pipeline, either build
+  a recent OpenCV from source yourself, or install one from a source
+  that ships a newer version than your distro's default repos.
 
 ### Build
 
@@ -50,51 +44,59 @@ for each — usable as a standalone command-line tool, or from Emacs.
 cargo build --release
 ```
 
-The resulting binary is at `target/release/facecomp`.
+The resulting binary is at `target/release/facecomp`. Point
+`PKG_CONFIG_PATH` at your OpenCV build's `lib/pkgconfig` directory
+first if it isn't the one your system's `pkg-config` would find by
+default.
 
 ## Model files
 
-`facecomp` needs two of dlib's pretrained model files at runtime. They
-are not checked into this repository (they're tens of MB each) and
-must be downloaded separately:
+`facecomp` needs two of OpenCV Zoo's pretrained model files at
+runtime. They are not checked into this repository (the recognition
+model alone is ~37 MB) and must be downloaded separately:
 
-- `shape_predictor_68_face_landmarks.dat` — locates facial landmarks.
-- `dlib_face_recognition_resnet_model_v1.dat` — produces the 128-d
-  face embedding.
+- `face_detection_yunet_2023mar.onnx` — detects faces and 5-point
+  landmarks.
+- `face_recognition_sface_2021dec.onnx` — produces the 128-d face
+  embedding.
 
-Get both from dlib's own site: <http://dlib.net/files/>, as
-`.dat.bz2` archives that need decompressing (`bunzip2`). On
-Debian/Ubuntu, the `libdlib-data` package also ships the landmark file
-at `/usr/share/dlib/shape_predictor_68_face_landmarks.dat`, but the
-face-recognition ResNet model still has to come from dlib.net.
+Get both from the [OpenCV Zoo](https://github.com/opencv/opencv_zoo)
+repository, under `models/face_detection_yunet/` and
+`models/face_recognition_sface/` respectively (they're stored via Git
+LFS, so a plain file download from GitHub's UI works, but a shallow
+`git clone` without LFS will only get you pointer files).
 
 ## Portable AppImage build
 
 Since the compiled binary alone isn't enough to run on another
-machine — it also needs its shared library dependencies (BLAS,
-LAPACK, dlib, libjpeg, libpng, ...) and both model files present —
-`packaging/build-appimage.sh` bundles all of that into one
-self-contained `facecomp-x86_64.AppImage`:
+machine — it also needs a modern-enough OpenCV's shared libraries
+(distro packages are typically too old, see above) and both model
+files present — `packaging/build-appimage.sh` builds a minimal OpenCV
+from source and bundles everything into one self-contained
+`facecomp-x86_64.AppImage`:
 
 ```sh
 ./packaging/build-appimage.sh \
-  /path/to/shape_predictor_68_face_landmarks.dat \
-  /path/to/dlib_face_recognition_resnet_model_v1.dat
+  /path/to/face_detection_yunet_2023mar.onnx \
+  /path/to/face_recognition_sface_2021dec.onnx
 ```
 
-This builds `facecomp` in release mode, fetches `linuxdeploy` and
-`appimagetool` on first run (cached under `packaging/.tools/`), and
-produces `facecomp-x86_64.AppImage` in the repo root. The result:
+This builds OpenCV (core/imgproc/imgcodecs/objdetect/dnn only, to keep
+build time down — expect roughly 10 minutes on a few cores, cached
+across runs in CI) and `facecomp` in release mode, fetches
+`linuxdeploy` and `appimagetool` on first run (cached under
+`packaging/.tools/`), and produces `facecomp-x86_64.AppImage` in the
+repo root. The result:
 
-- Runs on other Linux x86_64 machines without needing dlib, BLAS,
-  LAPACK, or cmake installed — those shared libraries are bundled
-  alongside the binary and preferred over any system copies via
-  `LD_LIBRARY_PATH`.
+- Runs on other Linux x86_64 machines without needing OpenCV, cmake,
+  or a C++ compiler installed — the shared libraries this build
+  produces are bundled alongside the binary and preferred over any
+  system copies via `LD_LIBRARY_PATH`.
 - `--master`/`--slave`/etc. work exactly as documented below —
-  `--landmark-model`/`--encoder-model` don't need to be passed since
+  `--detector-model`/`--encoder-model` don't need to be passed since
   the AppImage's `AppRun` wrapper points them at the bundled model
   files automatically (still overridable via
-  `FACECOMP_LANDMARK_MODEL`/`FACECOMP_ENCODER_MODEL` if you want to
+  `FACECOMP_DETECTOR_MODEL`/`FACECOMP_ENCODER_MODEL` if you want to
   point at different ones).
 - Works whether or not the target machine has FUSE: if `fusermount`
   isn't available to mount the AppImage, its runtime automatically
@@ -109,8 +111,8 @@ as whatever machine you build it on (glibc is forward-compatible only)
 
 ```sh
 facecomp \
-  --landmark-model /path/to/shape_predictor_68_face_landmarks.dat \
-  --encoder-model  /path/to/dlib_face_recognition_resnet_model_v1.dat \
+  --detector-model /path/to/face_detection_yunet_2023mar.onnx \
+  --encoder-model  /path/to/face_recognition_sface_2021dec.onnx \
   --master master.jpg \
   --slave photo1.jpg photo2.jpg
 ```
@@ -122,9 +124,9 @@ compared against each other):
 ```
 master: master.jpg
 
-photo                           faces   distance  match %  confidence      same?
-photo1.jpg                        1       0.1991    83.4%  Very likely     yes
-photo2.jpg                        1       0.6965    42.0%  Unlikely        no
+photo                           faces  similarity  match %  confidence      same?
+photo1.jpg                        1        0.7437    79.9%  Likely          yes
+photo2.jpg                        1        0.0992    29.3%  Unlikely        no
 ```
 
 If a slave photo has more than one person in it, `facecomp` compares
@@ -138,7 +140,7 @@ path — useful when your shell doesn't expand wildcards itself, or
 you'd rather not rely on shell expansion at all:
 
 ```sh
-facecomp --master master.jpg --landmark-model ... --encoder-model ... --slave "photos/*.png"
+facecomp --master master.jpg --detector-model ... --encoder-model ... --slave "photos/*.png"
 ```
 
 (Quote the pattern so your shell passes it through literally.) If a
@@ -146,13 +148,13 @@ glob happens to match the master photo itself, it's excluded
 automatically.
 
 Model paths can also come from environment variables instead of flags:
-`FACECOMP_LANDMARK_MODEL` and `FACECOMP_ENCODER_MODEL`.
+`FACECOMP_DETECTOR_MODEL` and `FACECOMP_ENCODER_MODEL`.
 
 Other flags:
 
-- `--threshold <f64>` — the embedding distance at/below which two faces
-  count as the same person (default `0.6`, dlib's own published
-  recommendation).
+- `--threshold <f64>` — the cosine similarity at/above which two faces
+  count as the same person (default `0.363`, the OpenCV Zoo-published
+  recommendation for the SFace model).
 - `--json` — emit a machine-readable JSON report instead of the table
   above (this is what `facecomp.el` uses).
 
@@ -161,18 +163,19 @@ detected in it, or a glob matched nothing).
 
 ### Interpreting the percentage
 
-The embedding distance itself (0 = identical, larger = less alike) is
-the only number dlib actually calibrates — its documented same/different
-cutoff is 0.6. The "match %" is a heuristic linear rescaling of that
-distance, chosen so the 0.6 cutoff lands at exactly 50%:
+The cosine similarity itself (1.0 = identical, lower = less alike, and
+in principle as low as -1.0) is the only number OpenCV Zoo actually
+calibrates — its documented same/different cutoff for the SFace model
+is 0.363. The "match %" is a heuristic linear rescaling of that
+similarity, chosen so the 0.363 cutoff lands at exactly 50%:
 
 ```
-match% = clamp(100 * (1 - distance / (2 * threshold)), 0, 100)
+match% = clamp(100 * (similarity - (2*threshold - 1)) / (1 - (2*threshold - 1)), 0, 100)
 ```
 
 It is not a calibrated probability of "same person" — treat it as a
-convenient, threshold-centered readout of the underlying distance, not
-ground truth.
+convenient, threshold-centered readout of the underlying similarity,
+not ground truth.
 
 ### Confidence labels
 
@@ -205,8 +208,8 @@ Load `emacs/facecomp.el` and configure it:
 (use-package facecomp
   :load-path "/path/to/facecomp/emacs"
   :custom
-  (facecomp-landmark-model "/path/to/shape_predictor_68_face_landmarks.dat")
-  (facecomp-encoder-model "/path/to/dlib_face_recognition_resnet_model_v1.dat")
+  (facecomp-detector-model "/path/to/face_detection_yunet_2023mar.onnx")
+  (facecomp-encoder-model "/path/to/face_recognition_sface_2021dec.onnx")
   ;; Only needed if the `facecomp` binary isn't already on PATH:
   (facecomp-executable "/path/to/facecomp/target/release/facecomp"))
 ```
