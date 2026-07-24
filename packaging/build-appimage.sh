@@ -31,7 +31,10 @@ fetch_tool() {
   local url="$2"
   local dest="$tools_dir/$name"
   if [[ ! -x "$dest" ]]; then
-    echo "Fetching $name..."
+    # Must go to stderr: this function's stdout is captured by the caller
+    # via $(...) to get $dest back, so anything printed to stdout here
+    # would get appended to that captured path and corrupt it.
+    echo "Fetching $name..." >&2
     curl -sS -L -o "$dest" "$url"
     chmod +x "$dest"
   fi
