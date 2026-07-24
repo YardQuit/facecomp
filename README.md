@@ -68,6 +68,43 @@ Debian/Ubuntu, the `libdlib-data` package also ships the landmark file
 at `/usr/share/dlib/shape_predictor_68_face_landmarks.dat`, but the
 face-recognition ResNet model still has to come from dlib.net.
 
+## Portable AppImage build
+
+Since the compiled binary alone isn't enough to run on another
+machine — it also needs its shared library dependencies (BLAS,
+LAPACK, dlib, libjpeg, libpng, ...) and both model files present —
+`packaging/build-appimage.sh` bundles all of that into one
+self-contained `facecomp-x86_64.AppImage`:
+
+```sh
+./packaging/build-appimage.sh \
+  /path/to/shape_predictor_68_face_landmarks.dat \
+  /path/to/dlib_face_recognition_resnet_model_v1.dat
+```
+
+This builds `facecomp` in release mode, fetches `linuxdeploy` and
+`appimagetool` on first run (cached under `packaging/.tools/`), and
+produces `facecomp-x86_64.AppImage` in the repo root. The result:
+
+- Runs on other Linux x86_64 machines without needing dlib, BLAS,
+  LAPACK, or cmake installed — those shared libraries are bundled
+  alongside the binary and preferred over any system copies via
+  `LD_LIBRARY_PATH`.
+- `--master`/`--slave`/etc. work exactly as documented below —
+  `--landmark-model`/`--encoder-model` don't need to be passed since
+  the AppImage's `AppRun` wrapper points them at the bundled model
+  files automatically (still overridable via
+  `FACECOMP_LANDMARK_MODEL`/`FACECOMP_ENCODER_MODEL` if you want to
+  point at different ones).
+- Works whether or not the target machine has FUSE: if `fusermount`
+  isn't available to mount the AppImage, its runtime automatically
+  falls back to self-extracting, no `--appimage-extract-and-run` flag
+  needed.
+
+Caveat: the produced binary requires a glibc version at least as new
+as whatever machine you build it on (glibc is forward-compatible only)
+— build on the oldest Linux you expect to target, not the newest.
+
 ## CLI usage
 
 ```sh

@@ -1,0 +1,88 @@
+name: Build AppImage
+
+on:
+  push:
+    branches: [master]
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Built on the oldest LTS GitHub still offers, since glibc is
+    # forward-compatible only: a binary built on newer glibc won't run on
+    # older systems, but one built on an older glibc runs fine everywhere newer.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake build-essential libopenblas-dev liblapack-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache dlib model files
+        id: cache-models
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: dlib-models-v1
+
+      - name: Download dlib model files
+        if: steps.cache-models.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sSL -o /tmp/landmarks.dat.bz2 http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
+          curl -sSL -o /tmp/encoder.dat.bz2 http://dlib.net/files/dlib_face_recognition_resnet_model_v1.dat.bz2
+          bunzip2 -c /tmp/landmarks.dat.bz2 > models/shape_predictor_68_face_landmarks.dat
+          bunzip2 -c /tmp/encoder.dat.bz2 > models/dlib_face_recognition_resnet_model_v1.dat
+
+      - name: Cache packaging tools (linuxdeploy/appimagetool)
+        uses: actions/cache@v4
+        with:
+          path: packaging/.tools
+          key: appimage-tools-v1
+
+      - name: Build AppImage
+        run: |
+          ./packaging/build-appimage.sh \
+            models/shape_predictor_68_face_landmarks.dat \
+            models/dlib_face_recognition_resnet_model_v1.dat
+
+      - name: Smoke-test the AppImage
+        run: ./facecomp-x86_64.AppImage --appimage-extract-and-run --help
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: facecomp-x86_64.AppImage
+          path: facecomp-x86_64.AppImage
+
+      # Rolling build for testers/early adopters: every push to master
+      # overwrites this same pre-release's asset.
+      - name: Publish continuous build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous build (master)
+          prerelease: true
+          body: |
+            Automatically rebuilt from the latest `master` commit (${{ github.sha }}).
+            Not a stable release — for testers and early adopters only.
+          files: facecomp-x86_64.AppImage
+
+      # Versioned release: attach to whatever GitHub Release was just published.
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: facecomp-x86_64.AppImage
