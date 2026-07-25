@@ -298,7 +298,10 @@ Then:
 
 - `M-x facecomp-compare` prompts for a master photo, then either a
   glob pattern (e.g. `*.png`) or photos to compare against it picked
-  one at a time.
+  one at a time. A relative glob is resolved against the master
+  photo's own directory — not the buffer you invoked `M-x` from — and
+  the prompt names that directory so it's clear what's being searched.
+  Absolute patterns are used as given.
 - Or mark two or more files in Dired and run `M-x facecomp-compare` —
   you'll be prompted for which of the marked files is the master
   (defaulting to the topmost one in the Dired listing), and the rest

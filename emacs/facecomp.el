@@ -118,17 +118,30 @@ user mistake worth catching early, rather than silently ignored."
       (setq args (nconc args (list "--encoder-model" facecomp-encoder-model))))
     args))
 
-(defun facecomp--read-targets ()
-  "Prompt for a glob pattern, or, if left blank, files picked one at a time."
-  (let ((pattern (read-string
-                  "Photos to compare against master (glob, e.g. *.png; blank to pick one at a time): ")))
+(defun facecomp--read-targets (&optional master)
+  "Prompt for a glob pattern, or, if left blank, files picked one at a time.
+
+A relative glob is resolved against MASTER's own directory, not against
+`default-directory'.  The buffer \\[execute-extended-command] was invoked
+from is rarely where the photos live, so resolving against it made an
+obvious-looking `*.jpg' silently match nothing.  An absolute pattern is
+used as given.  Prompts show the directory being searched, so a miss is
+diagnosable rather than mysterious."
+  (let* ((dir (or (and master (file-name-directory master)) default-directory))
+         (pattern (read-string
+                   (format "Photos to compare against master (glob, e.g. *.png, in %s; blank to pick one at a time): "
+                           (abbreviate-file-name dir)))))
     (if (not (string-empty-p pattern))
-        (or (file-expand-wildcards pattern t)
-            (user-error "No files matched `%s'" pattern))
+        (let ((full (if (file-name-absolute-p pattern)
+                        pattern
+                      (expand-file-name pattern dir))))
+          (or (file-expand-wildcards full t)
+              (user-error "No files matched `%s' in %s"
+                          pattern (abbreviate-file-name dir))))
       (let (files)
-        (push (read-file-name "Photo: " nil nil t) files)
+        (push (read-file-name "Photo: " dir nil t) files)
         (while (y-or-n-p (format "Add another photo (%d selected so far)? " (length files)))
-          (push (read-file-name (format "Photo %d: " (1+ (length files))) nil nil t) files))
+          (push (read-file-name (format "Photo %d: " (1+ (length files))) dir nil t) files))
         (mapcar #'expand-file-name (nreverse files))))))
 
 (defun facecomp--run (master targets &optional confidence)
@@ -238,7 +251,7 @@ having to change your configuration and change it back."
              (>= (length (dired-get-marked-files)) 2))
         (facecomp--choose-master (dired-get-marked-files))
       (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
-        (list master (facecomp--read-targets))))
+        (list master (facecomp--read-targets master))))
     ;; Read last, so the prefix-arg prompt doesn't precede choosing photos.
     (list (when current-prefix-arg (facecomp--read-confidence)))))
   (when (null targets)
