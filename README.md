@@ -305,6 +305,13 @@ Then:
   are compared against it. This is a real prompt rather than "whichever
   one you marked first," since Dired itself doesn't track marking
   order - only buffer order.
+- `C-u M-x facecomp-compare` additionally prompts for a detection
+  confidence to use for that run only (defaulting to `0.8`), leaving
+  `facecomp-detection-confidence` untouched. This is the Emacs
+  equivalent of passing `--detection-confidence` on the command line,
+  and it's the convenient way to re-check a borderline result at a
+  stricter setting — see [Detection confidence](#detection-confidence)
+  — without editing your configuration and changing it back.
 
 Results are shown in a `*facecomp*` buffer, one photo per entry, with
 the match percentage and confidence label colored by confidence.
