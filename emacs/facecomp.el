@@ -131,19 +131,21 @@ user mistake worth catching early, rather than silently ignored."
           (push (read-file-name (format "Photo %d: " (1+ (length files))) nil nil t) files))
         (mapcar #'expand-file-name (nreverse files))))))
 
-(defun facecomp--run (master targets)
+(defun facecomp--run (master targets &optional confidence)
   "Run the facecomp executable comparing MASTER against TARGETS.
+CONFIDENCE, when non-nil, overrides `facecomp-detection-confidence' for
+this run only; the customize variable itself is left untouched.
 Returns the parsed JSON report."
   (unless (executable-find facecomp-executable)
     (user-error "Could not find `%s' on PATH; set `facecomp-executable'"
                 facecomp-executable))
   (with-temp-buffer
-    (let* ((args (append (list "--master" master)
+    (let* ((conf (or confidence facecomp-detection-confidence))
+           (args (append (list "--master" master)
                           (facecomp--model-args)
                           (list "--threshold" (number-to-string facecomp-threshold))
-                          (when facecomp-detection-confidence
-                            (list "--detection-confidence"
-                                  (number-to-string facecomp-detection-confidence)))
+                          (when conf
+                            (list "--detection-confidence" (number-to-string conf)))
                           (list "--json" "--slave")
                           targets))
            (status (apply #'call-process facecomp-executable nil t nil args))
@@ -204,8 +206,18 @@ this always asks explicitly rather than guessing from position."
          (master (alist-get choice candidates nil nil #'string=)))
     (list master (remove master marked))))
 
+(defun facecomp--read-confidence ()
+  "Prompt for a one-off detection confidence, and sanity-check it.
+Defaults to 0.8, the value facecomp documents for when every result
+needs to be trustworthy - which is the usual reason to re-run a
+borderline comparison at a different setting."
+  (let ((conf (read-number "Detection confidence for this run: " 0.8)))
+    (unless (and (> conf 0.0) (<= conf 1.0))
+      (user-error "Detection confidence must be greater than 0 and at most 1"))
+    conf))
+
 ;;;###autoload
-(defun facecomp-compare (master targets)
+(defun facecomp-compare (master targets &optional confidence)
   "Compare MASTER against each of TARGETS and show a percentage match.
 Each result also gets a qualitative confidence label (Almost certain,
 Very likely, Likely, ...).
@@ -214,16 +226,24 @@ When called from a Dired buffer with two or more files marked, prompts
 for which of the marked files is MASTER (defaulting to the topmost one
 in the buffer) and uses the rest as TARGETS. Otherwise prompts for a
 master photo, then either a glob pattern \(e.g. \"*.png\"\) or photos
-picked one at a time."
+picked one at a time.
+
+With a prefix argument, also prompts for a detector CONFIDENCE to use
+for this run only, leaving `facecomp-detection-confidence' alone. Use
+it to re-check a borderline result at a stricter setting without
+having to change your configuration and change it back."
   (interactive
-   (if (and (derived-mode-p 'dired-mode)
-            (>= (length (dired-get-marked-files)) 2))
-       (facecomp--choose-master (dired-get-marked-files))
-     (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
-       (list master (facecomp--read-targets)))))
+   (append
+    (if (and (derived-mode-p 'dired-mode)
+             (>= (length (dired-get-marked-files)) 2))
+        (facecomp--choose-master (dired-get-marked-files))
+      (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
+        (list master (facecomp--read-targets))))
+    ;; Read last, so the prefix-arg prompt doesn't precede choosing photos.
+    (list (when current-prefix-arg (facecomp--read-confidence)))))
   (when (null targets)
     (user-error "Select at least one photo to compare against the master"))
-  (facecomp--render (facecomp--run master targets)))
+  (facecomp--render (facecomp--run master targets confidence)))
 
 (provide 'facecomp)
 
