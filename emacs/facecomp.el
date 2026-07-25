@@ -90,6 +90,14 @@ Passed through to the `facecomp' executable's `--threshold' flag."
   :type 'float
   :group 'facecomp)
 
+(defcustom facecomp-detection-confidence nil
+  "Detector confidence at/above which a candidate counts as a face.
+Lower it to find faces in difficult photos, raise it if non-faces are
+being picked up.  Leave nil to use the `facecomp' executable's own
+default, so the two can't drift apart when that default changes."
+  :type '(choice (const :tag "Let facecomp decide" nil) float)
+  :group 'facecomp)
+
 (defun facecomp--model-args ()
   "Build the `--detector-model'/`--encoder-model' flags, if configured.
 Each is included only when its customize variable is set to an
@@ -132,9 +140,11 @@ Returns the parsed JSON report."
   (with-temp-buffer
     (let* ((args (append (list "--master" master)
                           (facecomp--model-args)
-                          (list "--threshold" (number-to-string facecomp-threshold)
-                                "--json"
-                                "--slave")
+                          (list "--threshold" (number-to-string facecomp-threshold))
+                          (when facecomp-detection-confidence
+                            (list "--detection-confidence"
+                                  (number-to-string facecomp-detection-confidence)))
+                          (list "--json" "--slave")
                           targets))
            (status (apply #'call-process facecomp-executable nil t nil args))
            (output (buffer-string)))
