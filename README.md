@@ -123,11 +123,17 @@ compared against each other):
 
 ```
 master: master.jpg
+embedding: 128 dimensions per face
 
 photo                           faces similarity  match %  confidence
 photo1.jpg                          1     0.7437    79.9%  Likely
 photo2.jpg                          1     0.0992    29.3%  Unlikely
 ```
+
+The `embedding` line reports how many numbers each face was reduced to
+before comparison — see [How faces are compared](#how-faces-are-compared).
+It's read back from the model actually in use rather than hardcoded, so
+it stays accurate if you pass a different recognition model.
 
 If a slave photo has more than one person in it, `facecomp` compares
 the master against every face detected and reports the best match —
@@ -182,6 +188,26 @@ match% = clamp(100 * (similarity - (2*threshold - 1)) / (1 - (2*threshold - 1)),
 It is not a calibrated probability of "same person" — treat it as a
 convenient, threshold-centered readout of the underlying similarity,
 not ground truth.
+
+### How faces are compared
+
+Each detected face is reduced to an **embedding** — a fixed-length list
+of numbers describing that face. Two faces are compared by the cosine
+similarity between their embeddings, which is the `similarity` column.
+The shipped SFace model produces **128 numbers per face**, reported as
+the `embedding` line in the output (`embedding_dimensions` in `--json`).
+
+Those 128 values are what's actually compared. It's worth separating
+them from a different count that often gets conflated with them: the
+detector also locates **5 facial landmarks** (both eyes, the nose tip,
+and both mouth corners), but those exist only to align and crop a face
+into a canonical position before it's embedded. They are never compared
+against each other, so a detector reporting more landmarks would not
+mean more points of comparison — only more precise alignment.
+
+If you want more points of comparison, that means a recognition model
+with a larger embedding (ArcFace, for example, produces 512), not a
+detector with more landmarks.
 
 ### Detection confidence
 

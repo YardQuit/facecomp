@@ -5,7 +5,8 @@ use clap::Parser;
 use serde::Serialize;
 
 use facecomp::{
-    confidence_label, FaceComparer, DEFAULT_DETECTION_CONFIDENCE, DEFAULT_THRESHOLD,
+    confidence_label, embedding_dimensions, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
+    DEFAULT_THRESHOLD,
 };
 
 /// Compare a master photo against one or more other photos and report a
@@ -17,7 +18,7 @@ use facecomp::{
     author = "Michael A Jones <yardquit@pm.me>",
     about = "Compare a master photo against one or more other photos and report a percentage match plus a confidence label for each",
     help_template = "{before-help}{name}({version}) Face Comparison\nCopyright (C) 2026 {author}\nLicensed under the GNU General Public License v3.0 (GPL-3.0-or-later);\nsee the LICENSE file distributed with this program for the full text.\n\n{about}\n{usage-heading} {usage}\n\n{all-args}{after-help}\n",
-    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found."
+    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found.\n\nHOW FACES ARE COMPARED:\n    Each face is reduced to an embedding - a fixed list of numbers describing\n    it - and two faces are compared by the cosine similarity between their\n    embeddings. The shipped SFace model produces 128 numbers per face; the\n    exact count for the model in use is reported as `embedding` in the output\n    (`embedding_dimensions` in --json).\n\n    The detector also finds 5 facial landmarks (eyes, nose, mouth corners),\n    but those are used only to align a face before embedding it. They are not\n    themselves compared, so they don't add to the numbers above."
 )]
 struct Args {
     /// The reference photo every other photo is compared against.
@@ -66,6 +67,7 @@ struct MasterComparison {
 struct Report {
     master: PathBuf,
     threshold: f64,
+    embedding_dimensions: i32,
     results: Vec<MasterComparison>,
     errors: Vec<String>,
 }
@@ -161,10 +163,13 @@ fn main() -> ExitCode {
         }
     }
 
+    let embedding_dims = embedding_dimensions(&master_encoding);
+
     if args.json {
         let report = Report {
             master: args.master,
             threshold: args.threshold,
+            embedding_dimensions: embedding_dims,
             results,
             errors: errors.clone(),
         };
@@ -173,7 +178,8 @@ fn main() -> ExitCode {
         for err in &errors {
             eprintln!("warning: {err}");
         }
-        println!("master: {}\n", args.master.display());
+        println!("master: {}", args.master.display());
+        println!("embedding: {embedding_dims} dimensions per face\n");
         println!(
             "{:<30} {:>6} {:>10} {:>8}  confidence",
             "photo", "faces", "similarity", "match %"

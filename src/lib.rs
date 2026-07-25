@@ -42,6 +42,17 @@ pub const DEFAULT_DETECTION_CONFIDENCE: f32 = 0.7;
 /// A face embedding: a 1x128 row produced by `FaceRecognizerSF::feature`.
 pub type FaceEncoding = Mat;
 
+/// How many numbers make up one face embedding.
+///
+/// This is the count of values actually compared between two faces - 128 for
+/// the shipped SFace model. It is read back from the embedding rather than
+/// hardcoded, so it stays truthful if a different recognition model is passed
+/// in. Note this is unrelated to the detector's 5 facial landmarks, which are
+/// used only to align a face before embedding and are never compared.
+pub fn embedding_dimensions(encoding: &FaceEncoding) -> i32 {
+    encoding.cols()
+}
+
 #[derive(Debug)]
 pub enum FacecompError {
     Image(PathBuf, String),
