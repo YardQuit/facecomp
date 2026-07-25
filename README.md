@@ -229,6 +229,20 @@ real-world photos:
 non-face imagery and same/different separation begins to degrade, while
 above it a lot of perfectly ordinary photos are simply refused.
 
+**Which value to use.** Run `0.8` when every result needs to be
+trustworthy — it never picked up a non-face, and still finds faces in
+more photos than `0.9` does, so there is no reason to run `0.9` at all.
+Keep the `0.7` default when you would rather not silently skip photos.
+Don't go below `0.6`.
+
+Note this setting doesn't govern how *accurate* a comparison is — that
+comes from the model and `--threshold`. What it changes is which photos
+produce a face at all. It does have a second-order effect worth knowing:
+a marginal detection gives sloppier landmarks, so the face is aligned
+less precisely before embedding, which makes that particular result less
+reliable. That's a good reason to re-check a borderline result (an "Even
+chance" verdict, or a surprising `faces` count) at `0.8`.
+
 The two kinds of mistake are not equally costly, which is why the
 default leans toward sensitivity. A missed face is a hard failure —
 the photo can't be compared at all and you get `no face detected`. A
