@@ -164,7 +164,12 @@ Returns the parsed JSON report."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (format "master: %s\n\n" (alist-get 'master report)))
+        (insert (format "master: %s\n" (alist-get 'master report)))
+        ;; Older facecomp builds don't report this, so only show it when present.
+        (let ((dims (alist-get 'embedding_dimensions report)))
+          (when dims
+            (insert (format "embedding: %d dimensions per face\n" dims))))
+        (insert "\n")
         (dolist (err (alist-get 'errors report))
           (insert (propertize (format "warning: %s\n" err) 'face 'warning)))
         (when (alist-get 'errors report)
