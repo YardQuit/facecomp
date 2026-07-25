@@ -155,6 +155,12 @@ Other flags:
 - `--threshold <f64>` — the cosine similarity at/above which two faces
   count as the same person (default `0.363`, the OpenCV Zoo-published
   recommendation for the SFace model).
+- `--detection-confidence <f32>` — how confident YuNet must be before a
+  candidate counts as a face (default `0.7`; also settable via
+  `FACECOMP_DETECTION_CONFIDENCE`). Lower it if `facecomp` reports "no
+  face detected" on photos that clearly contain one; raise it if it
+  picks up things that aren't faces. See
+  [Detection confidence](#detection-confidence).
 - `--json` — emit a machine-readable JSON report instead of the table
   above (this is what `facecomp.el` uses).
 
@@ -176,6 +182,33 @@ match% = clamp(100 * (similarity - (2*threshold - 1)) / (1 - (2*threshold - 1)),
 It is not a calibrated probability of "same person" — treat it as a
 convenient, threshold-centered readout of the underlying similarity,
 not ground truth.
+
+### Detection confidence
+
+Before anything can be compared, YuNet has to actually find a face.
+`--detection-confidence` sets how sure it must be, and the default of
+`0.7` is deliberately lower than OpenCV's own `0.9`, which is too
+strict for ordinary photographs. Measured over a 64-image set of
+real-world photos:
+
+| `--detection-confidence` | Photos where a face was found | False detections on face-free images |
+|---|---|---|
+| 0.9 (OpenCV's default) | 41/64 (64%) | none |
+| 0.8                    | 48/64 (75%) | none |
+| **0.7 (facecomp's default)** | **59/64 (92%)** | one (a photo of dogs) |
+| 0.6                    | 63/64 (98%) | two |
+| 0.5                    | 64/64 (100%) | two |
+
+0.7 is where that curve turns: below it, the detector starts firing on
+non-face imagery and same/different separation begins to degrade, while
+above it a lot of perfectly ordinary photos are simply refused.
+
+The two kinds of mistake are not equally costly, which is why the
+default leans toward sensitivity. A missed face is a hard failure —
+the photo can't be compared at all and you get `no face detected`. A
+spurious detection just adds a row with a low similarity score: a dog
+photo compared against a person lands around 14% "Very unlikely",
+which reads correctly rather than misleadingly.
 
 ### Confidence labels
 
@@ -215,7 +248,10 @@ Load `emacs/facecomp.el` and configure it:
   (facecomp-detector-model "/path/to/face_detection_yunet_2023mar.onnx")
   (facecomp-encoder-model "/path/to/face_recognition_sface_2021dec.onnx")
   ;; Only needed if the `facecomp` binary isn't already on PATH:
-  (facecomp-executable "/path/to/facecomp/target/release/facecomp"))
+  (facecomp-executable "/path/to/facecomp/target/release/facecomp")
+  ;; Optional: leave unset to use facecomp's own default (0.7). Set it
+  ;; only to override - see "Detection confidence" above.
+  (facecomp-detection-confidence 0.7))
 ```
 
 Then:

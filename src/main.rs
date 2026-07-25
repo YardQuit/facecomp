@@ -4,7 +4,9 @@ use std::process::ExitCode;
 use clap::Parser;
 use serde::Serialize;
 
-use facecomp::{confidence_label, FaceComparer, DEFAULT_THRESHOLD};
+use facecomp::{
+    confidence_label, FaceComparer, DEFAULT_DETECTION_CONFIDENCE, DEFAULT_THRESHOLD,
+};
 
 /// Compare a master photo against one or more other photos and report a
 /// percentage match plus a qualitative confidence label for each.
@@ -40,6 +42,11 @@ struct Args {
     /// Cosine similarity at/above which two faces count as the same person.
     #[arg(long, default_value_t = DEFAULT_THRESHOLD)]
     threshold: f64,
+
+    /// Detector confidence at/above which a candidate counts as a face. Lower
+    /// it to find faces in difficult photos; raise it if non-faces are picked up.
+    #[arg(long, env = "FACECOMP_DETECTION_CONFIDENCE", default_value_t = DEFAULT_DETECTION_CONFIDENCE)]
+    detection_confidence: f32,
 
     /// Emit machine-readable JSON instead of a text table.
     #[arg(long)]
@@ -92,7 +99,11 @@ fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
 fn main() -> ExitCode {
     let args = Args::parse();
 
-    let mut comparer = match FaceComparer::new(&args.detector_model, &args.encoder_model) {
+    let mut comparer = match FaceComparer::new(
+        &args.detector_model,
+        &args.encoder_model,
+        args.detection_confidence,
+    ) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("facecomp: {e}");
