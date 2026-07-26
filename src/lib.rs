@@ -315,9 +315,17 @@ fn normalised(encoding: &FaceEncoding) -> Result<FaceEncoding, CvError> {
 /// safe for either backend, including SFace, whose raw features are not
 /// normalised.
 ///
-/// The gain comes from genuine variety - different sessions, angles,
-/// expressions. Near-duplicate photographs produce near-identical embeddings,
-/// so their centroid barely moves from any one of them and buys nothing.
+/// More photos help; how they are chosen appears not to. Deliberately picking
+/// photos that span different angles was measured against picking similar ones
+/// - same people, same held-out probes, only the enrolment differing - and made
+/// no difference: -0.0032 +/- 0.0093 of margin, diverse better in 45% of 160
+/// identities, even though the diverse pairs spanned a 15x wider pose gap.
+/// Averaging cancels noise, and pose is not noise; it is a large systematic
+/// shift that averaging lands between rather than removes.
+///
+/// What still buys nothing is a literal duplicate: the same photograph twice
+/// embeds identically, so the centroid doesn't move. That is about duplicates,
+/// not about pose.
 pub fn centroid(encodings: &[FaceEncoding]) -> Result<FaceEncoding, CvError> {
     let mut sum = normalised(&encodings[0])?;
     for encoding in &encodings[1..] {

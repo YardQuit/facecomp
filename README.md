@@ -294,10 +294,71 @@ in all three folds:
 
 Mean margin to the nearest impostor went 0.6556 → 0.6934.
 
-The gain comes from *genuine* variety, so pick photos that differ —
-different sessions, angles, expressions. Near-duplicates embed almost
-identically, so their average barely moves from any one of them and buys
-nothing.
+**More photos help; how you choose them appears not to.** Deliberately
+picking photos that span different angles was measured against picking
+similar ones — same people, same held-out probes, only the enrolment
+differing — and made no difference:
+
+| 2-photo enrolment | margin |
+|---|---|
+| pose-**diverse** pair | +0.5012 |
+| pose-**similar** pair | +0.5044 |
+| paired difference | **−0.0032 ± 0.0093** (95% CI), diverse better in 45% of 160 identities |
+
+The comparison was a real one — the diverse pairs spanned a **15×**
+wider pose gap (0.229 mean against 0.015) — so this is a null result,
+not a failure to create contrast. The likely reason is that averaging
+cancels *noise*, and pose isn't noise: it's a large systematic shift
+that the average lands between rather than removes.
+
+So use the confirmed photos you have, and don't hunt for angle
+coverage. What still buys nothing is a literal duplicate — the same
+photograph twice embeds identically, so the average doesn't move — but
+that's about duplicates, not about pose.
+
+#### Which photos make good masters
+
+Measured over 220 people from LFW: each of their photos took a turn as
+master, scored on how far it separated that person from 120 others.
+The comparison is between a person's *own* photos, so it measures the
+photograph rather than who is in it — otherwise the result would just
+be a ranking of who happens to be distinctive-looking.
+
+| property of the master | best master wins | verdict |
+|---|---|---|
+| **frontal view** | **61%** | **the one that matters** |
+| detector score | 61% | weak proxy for the same thing |
+| sharpness | 54% | barely |
+| brightness | 52% | no |
+| contrast | 52% | no |
+| face size in pixels | 51% | coin flip |
+
+*(50% means the property tells you nothing. The frontal figure is over
+the 131 people whose photos actually spanned pose, and is worth +0.029
+of separation on average.)*
+
+**Face size not mattering is the surprising one, and it's worth
+trusting** — every detected face is resampled to 112×112 before
+embedding, so extra pixels are discarded either way. A high-resolution
+photo is not a better reference than a modest one, provided a face is
+detected at all. Don't reject a candidate photo for being small.
+
+So prefer a **frontal, in-focus** photo. **Avoid full profile**: at
+around 90° one eye and one mouth corner are physically hidden, so the
+5-point alignment is fitting to positions the detector guessed. That
+doesn't error — it produces a confident, meaningless result. Moderate
+three-quarter views are fine, and are what several `--master` photos
+are for.
+
+**Before leaning on that ranking, know where it came from.** LFW is
+news photography: 92% of its faces are near-frontal, all are well
+exposed, all pre-cropped to a uniform size. Across that narrow range
+most image properties simply don't discriminate. Ordinary case
+photographs vary far more — so read "exposure doesn't matter" as
+*untested outside LFW's range*, not as established. The one finding
+that should generalise is the frontal preference, because it has a
+mechanism behind it: the alignment step depends on landmarks that a
+turned head progressively hides.
 
 **The `agreement` line is a safeguard, and worth reading.** It reports
 the lowest similarity between any two master photos. Enrolling several
