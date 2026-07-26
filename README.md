@@ -218,6 +218,70 @@ before comparison — see [How faces are compared](#how-faces-are-compared).
 It's read back from the model actually in use rather than hardcoded, so
 it stays accurate if you pass a different recognition model.
 
+### Several master photos
+
+`--master` also takes more than one photo of the same person. Their
+embeddings are averaged into a single template, which matches more
+reliably than any one photo:
+
+```sh
+facecomp --master alice-1.jpg alice-2.jpg alice-3.jpg --slave photos/*.jpg
+```
+
+```
+master: 3 photos averaged into one template
+  alice-1.jpg
+  alice-2.jpg
+  alice-3.jpg
+agreement: 0.7838 (lowest similarity between master photos)
+```
+
+A single photograph is one noisy sample of a face — it carries that
+day's lighting, that angle, that expression as well as the person.
+Averaging several cancels the nuisance variation and leaves what they
+share. Measured leave-one-out over three photographs of one subject
+(enrol two, probe the held-out third, against seven other people), the
+template scored the genuine probe higher than **either** enrolment photo
+in all three folds:
+
+| held-out probe | enrolment photo A | enrolment photo B | template |
+|---|---|---|---|
+| 1 | 0.7747 | 0.8035 | **0.8402** |
+| 2 | 0.7747 | 0.7639 | **0.8101** |
+| 3 | 0.8035 | 0.7639 | **0.8320** |
+
+Mean margin to the nearest impostor went 0.6556 → 0.6934.
+
+The gain comes from *genuine* variety, so pick photos that differ —
+different sessions, angles, expressions. Near-duplicates embed almost
+identically, so their average barely moves from any one of them and buys
+nothing.
+
+**The `agreement` line is a safeguard, and worth reading.** It reports
+the lowest similarity between any two master photos. Enrolling several
+photos asserts they are all the same person, and nothing else checks
+that: a stray photo of someone else drags the template toward them and
+then quietly mis-scores every comparison made against it. A disagreeing
+pair is the only visible symptom, so it's printed every time, with a
+warning when it falls below `--threshold`.
+
+Averaging was also compared against keeping every photo and taking each
+one's best match ("max over set"). Averaging won on every fold, for two
+reasons that aren't artifacts of the small sample: a maximum can only
+ever pick the best enrolment photo, whereas an average can beat all of
+them by cancelling noise; and a maximum raises impostor scores by the
+same mechanism, since an impostor need only resemble one photo. That
+option was measured, rejected, and removed rather than shipped as a
+tuning knob.
+
+One caveat. A template raises genuine scores by design, so a cutoff
+derived for one-to-one matching is more permissive here than it was
+calibrated to be. Until a threshold is derived for template matching —
+see [Choosing a backend](#choosing-a-backend) for why that is currently
+blocked — treat multi-photo results as *better ordered* rather than
+better calibrated, and lean on the similarity column rather than the
+match percentage.
+
 If a slave photo has more than one person in it, `facecomp` compares
 the master against every face detected and reports the best match —
 the `faces` column shows how many faces were found, so a value above 1
@@ -242,6 +306,9 @@ Model paths can also come from environment variables instead of flags:
 
 Other flags:
 
+- `--master <photo>...` — takes one photo or several of the same
+  person. Several are averaged into one template; see
+  [Several master photos](#several-master-photos).
 - `--backend <sface|arcface>` — which model turns a detected face into
   numbers (default `sface`). `--encoder-model` must be the matching
   weights. See [Choosing a backend](#choosing-a-backend).
