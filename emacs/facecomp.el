@@ -152,11 +152,41 @@ Returns the parsed JSON report."
                             (list "--detection-confidence" (number-to-string conf)))
                           (list "--json" "--slave")
                           targets))
-           (status (apply #'call-process facecomp-executable nil t nil args))
-           (output (buffer-string)))
+           ;; Keep stderr out of the buffer we parse: a bare `t' destination
+           ;; merges both streams into it. Held aside so it can still be
+           ;; shown if the run fails.
+           (stderr-file (make-temp-file "facecomp-stderr"))
+           status output stderr)
+      (unwind-protect
+          (progn
+            (setq status (apply #'call-process facecomp-executable nil
+                                (list t stderr-file) nil args))
+            (setq output (buffer-string))
+            (setq stderr (with-temp-buffer
+                           (insert-file-contents stderr-file)
+                           (string-trim (buffer-string)))))
+        (delete-file stderr-file))
       (condition-case _
-          (json-parse-string output :object-type 'alist :array-type 'list)
-        (error (error "facecomp exited with status %s: %s" status output))))))
+          (facecomp--parse-report output)
+        (error
+         (error "facecomp exited with status %s: %s%s" status output
+                (if (string-empty-p stderr) "" (concat "\nstderr: " stderr))))))))
+
+(defun facecomp--parse-report (output)
+  "Parse OUTPUT as facecomp's JSON report, tolerating leading noise.
+
+Parsing starts at the first brace rather than at the first character,
+because the AppImage runtime can print a diagnostic to *stdout* - not
+stderr - ahead of the payload it launches. On a host without FUSE it
+says \"No suitable fusermount binary found on the $PATH\", then runs
+anyway by self-extracting; the run succeeds and the report is correct,
+but that line sits in front of it. Anchoring to the brace keeps such
+noise from failing an otherwise good run."
+  (let ((start (string-match "{" output)))
+    (unless start
+      (error "no JSON object in facecomp output"))
+    (json-parse-string (substring output start)
+                       :object-type 'alist :array-type 'list)))
 
 (defun facecomp--percent-face (percent)
   "Return a face symbol reflecting how confident a PERCENT match is."
