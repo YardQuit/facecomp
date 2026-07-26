@@ -6,8 +6,7 @@ use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
 
 use facecomp::{
-    confidence_label, embedding_dimensions, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
-    DEFAULT_THRESHOLD,
+    confidence_label, embedding_dimensions, Backend, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
 };
 
 /// Compare a master photo against one or more other photos and report a
@@ -37,13 +36,26 @@ struct Args {
     #[arg(long, env = "FACECOMP_DETECTOR_MODEL")]
     detector_model: PathBuf,
 
-    /// Path to OpenCV Zoo's face_recognition_sface_2021dec.onnx.
-    #[arg(long, env = "FACECOMP_ENCODER_MODEL")]
-    encoder_model: PathBuf,
+    /// Which embedding model to use: "sface" (128 numbers per face) or
+    /// "arcface" (512). --encoder-model must be the matching weights.
+    #[arg(long, default_value = "sface", value_parser = parse_backend)]
+    backend: Backend,
+
+    /// Path to the embedding model matching --backend. Defaults to
+    /// $FACECOMP_ENCODER_MODEL for sface, $FACECOMP_ARCFACE_MODEL for arcface.
+    #[arg(long)]
+    encoder_model: Option<PathBuf>,
 
     /// Cosine similarity at/above which two faces count as the same person.
-    #[arg(long, default_value_t = DEFAULT_THRESHOLD, value_parser = parse_threshold)]
-    threshold: f64,
+    /// Defaults to 0.363 for sface; has no default for arcface, which has no
+    /// trustworthy value derived yet, so pass one explicitly.
+    #[arg(long, value_parser = parse_threshold)]
+    threshold: Option<f64>,
+
+    /// Report only the N closest-matching photos rather than every one
+    /// compared. Useful when --slave expands to a large directory.
+    #[arg(long, value_parser = parse_max)]
+    max: Option<usize>,
 
     /// Detector confidence at/above which a candidate counts as a face. Lower
     /// it to find faces in difficult photos; raise it if non-faces are picked up.
@@ -114,6 +126,72 @@ fn parse_detection_confidence(s: &str) -> Result<f32, String> {
     }
 }
 
+/// Parses `--backend`. Kept here rather than as a `clap::ValueEnum` on
+/// [`Backend`] so the library doesn't take a dependency on clap.
+fn parse_backend(s: &str) -> Result<Backend, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "sface" => Ok(Backend::SFace),
+        "arcface" => Ok(Backend::ArcFace),
+        other => Err(format!(
+            "unknown backend `{other}` (expected `sface` or `arcface`)"
+        )),
+    }
+}
+
+/// Rejects `--max 0`, which would silently report nothing at all rather than
+/// erroring - the same class of quietly-wrong output `--threshold 1.0` gave.
+fn parse_max(s: &str) -> Result<usize, String> {
+    let value: usize = s
+        .parse()
+        .map_err(|_| format!("`{s}` is not a whole number"))?;
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err("must be at least 1".to_string())
+    }
+}
+
+/// Resolves which weights file to load, given the backend and what the user
+/// supplied.
+///
+/// `--encoder-model` wins if present. Otherwise each backend reads its own
+/// environment variable, so the AppImage can export both bundled models up
+/// front and let `--backend` decide between them at run time.
+fn resolve_encoder_model(
+    explicit: Option<PathBuf>,
+    backend: Backend,
+) -> Result<PathBuf, String> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+    let var = match backend {
+        Backend::SFace => "FACECOMP_ENCODER_MODEL",
+        Backend::ArcFace => "FACECOMP_ARCFACE_MODEL",
+    };
+    std::env::var_os(var).map(PathBuf::from).ok_or_else(|| {
+        format!("no model for --backend {backend}: pass --encoder-model or set ${var}")
+    })
+}
+
+/// Resolves the same/different cutoff, refusing to invent one.
+///
+/// SFace has a published threshold to fall back on; ArcFace does not, and
+/// guessing would produce confident nonsense rather than an error. Requiring
+/// the flag is the honest failure mode until a value is derived on a pair set
+/// big enough to trust.
+fn resolve_threshold(explicit: Option<f64>, backend: Backend) -> Result<f64, String> {
+    explicit
+        .or_else(|| backend.default_threshold())
+        .ok_or_else(|| {
+            format!(
+                "--backend {backend} has no default --threshold yet, so one must be given \
+                 explicitly.\n       No trustworthy value has been derived for it: two small \
+                 pair sets disagreed by 0.119, far beyond their own ±0.033 spread, so neither \
+                 is usable as a default."
+            )
+        })
+}
+
 #[derive(Serialize)]
 struct MasterComparison {
     photo: PathBuf,
@@ -126,6 +204,7 @@ struct MasterComparison {
 #[derive(Serialize)]
 struct Report {
     master: PathBuf,
+    backend: &'static str,
     threshold: f64,
     embedding_dimensions: i32,
     results: Vec<MasterComparison>,
@@ -161,10 +240,27 @@ fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
 fn main() -> ExitCode {
     let args = Args::parse();
 
+    let encoder_model = match resolve_encoder_model(args.encoder_model, args.backend) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("facecomp: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let threshold = match resolve_threshold(args.threshold, args.backend) {
+        Ok(threshold) => threshold,
+        Err(e) => {
+            eprintln!("facecomp: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let mut comparer = match FaceComparer::new(
         &args.detector_model,
-        &args.encoder_model,
+        &encoder_model,
         args.detection_confidence,
+        args.backend,
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -200,7 +296,7 @@ fn main() -> ExitCode {
                 // rather than assuming there's only one face in frame.
                 let comparisons: Result<Vec<_>, _> = encodings
                     .iter()
-                    .map(|encoding| comparer.compare(&master_encoding, encoding, args.threshold))
+                    .map(|encoding| comparer.compare(&master_encoding, encoding, threshold))
                     .collect();
                 match comparisons {
                     Ok(comparisons) => {
@@ -223,12 +319,21 @@ fn main() -> ExitCode {
         }
     }
 
+    // Asking for the closest N matches only means something once they're
+    // ranked, so --max sorts before truncating. Without it the photos stay in
+    // the order they were given, which is what every previous version did.
+    if let Some(max) = args.max {
+        results.sort_by(|a, b| b.match_percent.total_cmp(&a.match_percent));
+        results.truncate(max);
+    }
+
     let embedding_dims = embedding_dimensions(&master_encoding);
 
     if args.json {
         let report = Report {
             master: args.master,
-            threshold: args.threshold,
+            backend: args.backend.as_str(),
+            threshold,
             embedding_dimensions: embedding_dims,
             results,
             errors: errors.clone(),
@@ -239,6 +344,7 @@ fn main() -> ExitCode {
             eprintln!("warning: {err}");
         }
         println!("master: {}", args.master.display());
+        println!("backend: {}", args.backend);
         println!("embedding: {embedding_dims} dimensions per face\n");
         println!(
             "{} {:>6} {:>10} {:>8}  confidence",

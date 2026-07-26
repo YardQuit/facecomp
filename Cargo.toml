@@ -20,5 +20,8 @@ clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 glob = "0.3"
-opencv = { version = "0.99.1", default-features = false, features = ["clang-runtime", "objdetect", "dnn", "imgcodecs"] }
+# calib3d is here for estimateAffinePartial2D, which aligns faces for the
+# ArcFace backend; imgproc for the warpAffine that applies the result. CI's
+# OpenCV BUILD_LIST has to match, or the crate fails to find the headers.
+opencv = { version = "0.99.1", default-features = false, features = ["clang-runtime", "objdetect", "dnn", "imgcodecs", "imgproc", "calib3d"] }
 unicode-width = "0.2.2"
