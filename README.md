@@ -86,28 +86,56 @@ download or the AppImage.
 |----------------|-------------------|----------------|
 | Embedding size | 128               | 512            |
 | Model size     | ~37 MB            | ~66 MB (int8)  |
-| Default cutoff | 0.363 (published) | none — see below |
+| Default cutoff | 0.363 (published) | 0.239 (derived)  |
+| LFW accuracy   | 0.9887            | **0.9932**       |
 
 Both backends detect with YuNet and compare by cosine similarity; they
-differ only in how a detected face becomes numbers. Measured on one
-same-person pair against three different people, ArcFace separated
-them by 0.6696 against SFace's 0.5130, almost entirely by scoring
-non-matches lower — its highest non-match was 0.0697, against SFace's
-0.2581.
+differ only in how a detected face becomes numbers. Measured over LFW's
+full 6000-pair protocol through this tool's own pipeline, ArcFace
+scores 0.9932 balanced accuracy against SFace's 0.9887, and separates
+the classes further — mean similarity 0.6768 vs 0.0045 for ArcFace,
+0.6491 vs 0.0833 for SFace. Most of the advantage is in scoring
+non-matches lower.
 
-**ArcFace has no default `--threshold`, on purpose.** A cutoff is a
-property of the model that produced the embeddings, and no trustworthy
-value has been derived for this one yet: two small pair sets disagreed
-by 0.119, far outside their own ±0.033 within-set spread, so neither
-is usable. `facecomp` therefore refuses to run `--backend arcface`
-without an explicit `--threshold` rather than inventing one. That is
-the same reasoning behind rejecting `--threshold 1.0`: a wrong cutoff
-doesn't fail loudly, it quietly mis-scores every comparison.
+**The two cutoffs are not interchangeable.** A threshold is a property
+of the model that produced the embeddings. Passing SFace's 0.363 to
+ArcFace would miss 56 of 3000 genuine LFW pairs where 0.239 misses 37
+— it wouldn't fail loudly, it would just quietly reject matches, the
+same way `--threshold 1.0` once reported an identical face as "0.0%
+Almost no chance".
 
-Until a value is derived on a pair set large enough to be stable
-(LFW's 6000 pairs, cross-checked against a second dataset), treat
-`--backend arcface` as experimental and the number you pass to
-`--threshold` as your own calibration.
+#### How ArcFace's 0.239 was derived
+
+Over LFW's 6000 pairs — 3000 same, 3000 different, across its ten
+official folds — with every pair usable and none skipped for a missed
+detection. The result was **0.2394 ± 0.0087** at **0.9932 ± 0.0034**
+balanced accuracy.
+
+Two conditions make that trustworthy, and the second is the one that
+is easy to miss:
+
+1. The per-fold spread is small.
+2. **No threshold anywhere scores a perfect 1.0000**, which means the
+   set contains pairs hard enough to actually pin the value.
+
+Without the second check, a small easy set produces a confident and
+worthless answer. A 66-image set tried here admitted *every* threshold
+from 0.167 to 0.729 at a perfect score — a plateau 0.563 wide — and
+duly reported the midpoint of that empty gap as 0.448 ± 0.0043, with
+no warning. On LFW the plateau is 0.199 wide and nothing scores
+perfectly.
+
+That is also why 0.239 is so much lower than every earlier estimate
+(0.374, 0.40, 0.448, 0.493). Small sets contain no hard genuine pairs,
+so nothing pulls the cut downward and it drifts up into the gap. At
+0.40 this backend missed 73 of 3000 genuine pairs; at 0.239 it misses
+37.
+
+SFace's published 0.363 was checked the same way. Deriving it through
+this pipeline puts the optimum slightly lower, at 0.3156 (55 missed
+pairs against 0.363's 72), but the difference is 0.13 percentage
+points of balanced accuracy, so the published value is kept rather
+than changing a shipped default for that.
 
 `tools/derive_threshold.py` is what derives it. It runs the same
 pipeline `facecomp` does — YuNet detect, 5-point align, embed, cosine
@@ -274,13 +302,13 @@ same mechanism, since an impostor need only resemble one photo. That
 option was measured, rejected, and removed rather than shipped as a
 tuning knob.
 
-One caveat. A template raises genuine scores by design, so a cutoff
-derived for one-to-one matching is more permissive here than it was
-calibrated to be. Until a threshold is derived for template matching —
-see [Choosing a backend](#choosing-a-backend) for why that is currently
-blocked — treat multi-photo results as *better ordered* rather than
-better calibrated, and lean on the similarity column rather than the
-match percentage.
+One caveat. A template raises genuine scores by design, so the default
+cutoffs — derived for one-to-one matching — are more permissive here
+than they were calibrated to be. LFW's pair protocol is one-photo-to-
+one-photo, so it cannot derive a template threshold; that needs a set
+with several photos per identity on both sides. Until then, treat
+multi-photo results as *better ordered* rather than better calibrated,
+and lean on the similarity column rather than the match percentage.
 
 If a slave photo has more than one person in it, `facecomp` compares
 the master against every face detected and reports the best match —
@@ -314,8 +342,9 @@ Other flags:
   weights. See [Choosing a backend](#choosing-a-backend).
 - `--threshold <f64>` — the cosine similarity at/above which two faces
   count as the same person (default `0.363` for `sface`, the OpenCV
-  Zoo-published recommendation; **no default for `arcface`**, which
-  refuses to run without one). Must be greater than 0 and less than 1;
+  Zoo-published recommendation; `0.239` for `arcface`, derived over
+  LFW — see [Choosing a backend](#choosing-a-backend)). Must be greater
+  than 0 and less than 1;
   cosine similarity never exceeds 1.0, and a threshold at or above it
   would collapse the match-percent scale rather than simply matching
   nothing, so such values are rejected outright.
@@ -483,16 +512,19 @@ Every setting above is optional and defaults to "let `facecomp`
 decide", so nothing here pins a value that the binary might later
 change out from under it.
 
-To use ArcFace instead, set the backend and point at its weights.
-`facecomp-threshold` is mandatory in that case — `facecomp` refuses to
-guess a cutoff it hasn't derived, and Emacs will surface that refusal
-as an error rather than a silently wrong result:
+To use ArcFace instead, set the backend and point at its weights —
+that's all:
 
 ```elisp
 (facecomp-backend 'arcface)
 (facecomp-arcface-model "/path/to/arcfaceresnet100-11-int8.onnx")
-(facecomp-threshold 0.45)   ; your own calibration - see "Choosing a backend"
 ```
+
+Leave `facecomp-threshold` nil, which is the recommended setting. The
+executable then applies the cutoff belonging to whichever backend is
+selected — 0.363 for SFace, 0.239 for ArcFace — so the two can't get
+crossed. Pinning ArcFace's backend while leaving SFace's threshold
+pinned wouldn't error; it would quietly reject genuine matches.
 
 `facecomp-encoder-model` and `facecomp-arcface-model` are separate
 settings on purpose: whichever one matches `facecomp-backend` is the
