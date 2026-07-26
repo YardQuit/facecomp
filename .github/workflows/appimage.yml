@@ -1,8 +1,9 @@
-name: Build AppImage
+name: CI
 
 on:
   push:
     branches: [master]
+  pull_request:
   release:
     types: [published]
   workflow_dispatch: {}
@@ -11,7 +12,32 @@ permissions:
   contents: write
 
 jobs:
+  # Split out from `build` so pull requests get checked without packaging a
+  # ~91MB AppImage they'd only throw away. It also means a broken landmark
+  # ordering fails review rather than being discovered after the merge.
+  test:
+    # Same runner as `build`: the point of testing is to test what ships.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-opencv
+
+      # --all-targets so the examples compile too. ordering_check.rs is the tool
+      # that measured the numbers tests/arcface_alignment.rs encodes, and it
+      # should not be allowed to rot.
+      - name: Run tests
+        run: cargo test --all-targets
+
   build:
+    # Gated on `test`, so nothing is ever packaged or published from a tree
+    # whose tests fail. This also serialises the two jobs, which means `build`
+    # reuses the OpenCV that `test` just cached rather than racing it for the
+    # same key.
+    needs: test
+    # Pull requests stop at `test`. Packaging is only useful for something
+    # that's going to be published.
+    if: github.event_name != 'pull_request'
     # Built on the oldest LTS GitHub still offers, since glibc is
     # forward-compatible only: a binary built on newer glibc won't run on
     # older systems, but one built on an older glibc runs fine everywhere newer.
@@ -19,63 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake build-essential clang libclang-dev \
-            libjpeg-dev libpng-dev libtiff-dev libwebp-dev zlib1g-dev
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      # OpenCV older than ~4.10 (including every version Ubuntu's own apt
-      # repos ship) fails at *runtime* trying to load the YuNet detector
-      # model below - see the README's system requirements section - so a
-      # modern OpenCV has to be built from source. Minimal module set to
-      # keep this from-source build's time down; cached across runs since
-      # it's the same version/config every time.
-      - name: Cache OpenCV build
-        id: cache-opencv
-        uses: actions/cache@v4
-        with:
-          path: opencv-install
-          # The module list is part of this key on purpose. Adding a module
-          # without changing it restores an OpenCV built without that module
-          # and the Rust build then fails on missing headers, which reads as a
-          # code error rather than a stale cache.
-          key: opencv-4.10.0-objdetect-dnn-calib3d-v2
-
-      - name: Build OpenCV from source
-        if: steps.cache-opencv.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch 4.10.0 https://github.com/opencv/opencv.git /tmp/opencv-src
-          cmake -S /tmp/opencv-src -B /tmp/opencv-build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/opencv-install" \
-            -DBUILD_LIST=core,imgproc,imgcodecs,objdetect,dnn,calib3d \
-            -DBUILD_SHARED_LIBS=ON \
-            -DOPENCV_GENERATE_PKGCONFIG=ON \
-            -DBUILD_opencv_python2=OFF -DBUILD_opencv_python3=OFF \
-            -DBUILD_JAVA=OFF -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF \
-            -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF \
-            -DWITH_GTK=OFF -DWITH_QT=OFF -DWITH_FFMPEG=OFF -DWITH_1394=OFF \
-            -DWITH_GSTREAMER=OFF -DWITH_OPENEXR=OFF -DWITH_TBB=OFF \
-            -DWITH_IPP=OFF -DWITH_CUDA=OFF
-          cmake --build /tmp/opencv-build -j"$(nproc)" --target install
-          rm -rf /tmp/opencv-src /tmp/opencv-build
-
-      - name: Export OpenCV environment
-        run: |
-          echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/opencv-install/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/opencv-install/lib" >> "$GITHUB_ENV"
-
-      # Runs before anything is packaged, so a broken landmark ordering stops
-      # the build rather than shipping. --all-targets so the examples are
-      # compiled too - ordering_check.rs is the tool that measured the numbers
-      # tests/arcface_alignment.rs encodes, and it should not be allowed to rot.
-      - name: Run tests
-        run: cargo test --all-targets
+      - uses: ./.github/actions/setup-opencv
 
       - name: Cache model files
         id: cache-models
