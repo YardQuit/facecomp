@@ -171,10 +171,11 @@ which matches more reliably than any single one: a single photograph
 carries that day's lighting, angle and expression as well as the face,
 and averaging cancels what they don't share.
 
-Pick photos that genuinely differ - different sessions, angles,
-expressions.  Near-duplicates embed almost identically, so averaging
-them buys nothing.  Answer no at the first prompt for the ordinary
-one-photo case."
+Use the confirmed photos you have; there is no need to hunt for
+different angles.  Choosing photos that span pose was measured against
+choosing similar ones and made no difference.  Adding the same
+photograph twice does nothing, since it embeds identically.  Answer no
+at the first prompt for the ordinary one-photo case."
   (let ((first (expand-file-name (read-file-name "Master photo: " nil nil t))))
     (let ((files (list first)))
       (while (y-or-n-p

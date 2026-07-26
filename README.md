@@ -294,10 +294,27 @@ in all three folds:
 
 Mean margin to the nearest impostor went 0.6556 → 0.6934.
 
-The gain comes from *genuine* variety, so pick photos that differ —
-different sessions, angles, expressions. Near-duplicates embed almost
-identically, so their average barely moves from any one of them and buys
-nothing.
+**More photos help; how you choose them appears not to.** Deliberately
+picking photos that span different angles was measured against picking
+similar ones — same people, same held-out probes, only the enrolment
+differing — and made no difference:
+
+| 2-photo enrolment | margin |
+|---|---|
+| pose-**diverse** pair | +0.5012 |
+| pose-**similar** pair | +0.5044 |
+| paired difference | **−0.0032 ± 0.0093** (95% CI), diverse better in 45% of 160 identities |
+
+The comparison was a real one — the diverse pairs spanned a **15×**
+wider pose gap (0.229 mean against 0.015) — so this is a null result,
+not a failure to create contrast. The likely reason is that averaging
+cancels *noise*, and pose isn't noise: it's a large systematic shift
+that the average lands between rather than removes.
+
+So use the confirmed photos you have, and don't hunt for angle
+coverage. What still buys nothing is a literal duplicate — the same
+photograph twice embeds identically, so the average doesn't move — but
+that's about duplicates, not about pose.
 
 #### Which photos make good masters
 
