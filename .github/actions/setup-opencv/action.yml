@@ -1,0 +1,65 @@
+name: Set up OpenCV
+description: >
+  Builds the minimal OpenCV facecomp needs (cached across runs) and exports the
+  environment the opencv crate uses to find it.
+
+# Shared by every job that compiles facecomp, so the module list and the cache
+# key that names it live in exactly one place. Keeping them together matters:
+# they have to agree, and a copy of this block that drifts out of sync fails as
+# a missing-header compile error rather than as the stale cache it really is.
+
+runs:
+  using: composite
+  steps:
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq cmake build-essential clang libclang-dev \
+          libjpeg-dev libpng-dev libtiff-dev libwebp-dev zlib1g-dev
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    # OpenCV older than ~4.10 (including every version Ubuntu's own apt repos
+    # ship) fails at *runtime* trying to load the YuNet detector model - see the
+    # README's system requirements section - so a modern OpenCV has to be built
+    # from source. Minimal module set to keep that build's time down; cached
+    # across runs since it's the same version and config every time.
+    - name: Cache OpenCV build
+      id: cache-opencv
+      uses: actions/cache@v4
+      with:
+        path: opencv-install
+        # The module list is part of this key on purpose. Adding a module
+        # without changing it restores an OpenCV built without that module, and
+        # the Rust build then fails on missing headers, which reads as a code
+        # error rather than a stale cache.
+        key: opencv-4.10.0-objdetect-dnn-calib3d-v2
+
+    - name: Build OpenCV from source
+      if: steps.cache-opencv.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        git clone --depth 1 --branch 4.10.0 https://github.com/opencv/opencv.git /tmp/opencv-src
+        cmake -S /tmp/opencv-src -B /tmp/opencv-build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/opencv-install" \
+          -DBUILD_LIST=core,imgproc,imgcodecs,objdetect,dnn,calib3d \
+          -DBUILD_SHARED_LIBS=ON \
+          -DOPENCV_GENERATE_PKGCONFIG=ON \
+          -DBUILD_opencv_python2=OFF -DBUILD_opencv_python3=OFF \
+          -DBUILD_JAVA=OFF -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF \
+          -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF \
+          -DWITH_GTK=OFF -DWITH_QT=OFF -DWITH_FFMPEG=OFF -DWITH_1394=OFF \
+          -DWITH_GSTREAMER=OFF -DWITH_OPENEXR=OFF -DWITH_TBB=OFF \
+          -DWITH_IPP=OFF -DWITH_CUDA=OFF
+        cmake --build /tmp/opencv-build -j"$(nproc)" --target install
+        rm -rf /tmp/opencv-src /tmp/opencv-build
+
+    - name: Export OpenCV environment
+      shell: bash
+      run: |
+        echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/opencv-install/lib/pkgconfig" >> "$GITHUB_ENV"
+        echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/opencv-install/lib" >> "$GITHUB_ENV"

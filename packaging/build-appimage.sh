@@ -1,11 +1,15 @@
 #!/bin/bash
 # Build a self-contained facecomp-x86_64.AppImage: the compiled binary, its
-# shared library dependencies (OpenCV/libjpeg/libpng/...), and both ONNX
-# model files, bundled into one file that runs without needing any of those
+# shared library dependencies (OpenCV/libjpeg/libpng/...), and the ONNX model
+# files, bundled into one file that runs without needing any of those
 # installed on the target machine.
 #
 # Usage:
-#   ./packaging/build-appimage.sh /path/to/face_detection_yunet_2023mar.onnx /path/to/face_recognition_sface_2021dec.onnx
+#   ./packaging/build-appimage.sh <yunet.onnx> <sface.onnx> [arcface.onnx]
+#
+# The ArcFace model is optional: pass it to get a bundle that supports
+# `--backend arcface` (which adds ~66MB, taking the AppImage to roughly
+# 105MB), omit it for an SFace-only bundle.
 #
 # Requires: an OpenCV 4.10+ build discoverable via pkg-config (PKG_CONFIG_PATH
 # pointing at its lib/pkgconfig directory) and its shared libraries on
@@ -17,13 +21,14 @@
 
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <detector-model.onnx> <encoder-model.onnx>" >&2
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "usage: $0 <detector-model.onnx> <encoder-model.onnx> [arcface-model.onnx]" >&2
   exit 1
 fi
 
 detector_model="$1"
 encoder_model="$2"
+arcface_model="${3:-}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
@@ -61,6 +66,9 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
 cp "$repo_root/target/release/facecomp" "$appdir/usr/bin/facecomp"
 cp "$detector_model" "$appdir/usr/share/facecomp/models/face_detection_yunet_2023mar.onnx"
 cp "$encoder_model" "$appdir/usr/share/facecomp/models/face_recognition_sface_2021dec.onnx"
+if [[ -n "$arcface_model" ]]; then
+  cp "$arcface_model" "$appdir/usr/share/facecomp/models/arcfaceresnet100-11-int8.onnx"
+fi
 
 cat > "$appdir/usr/share/applications/facecomp.desktop" <<'EOF'
 [Desktop Entry]
@@ -95,6 +103,14 @@ HERE="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export FACECOMP_DETECTOR_MODEL="${FACECOMP_DETECTOR_MODEL:-$HERE/usr/share/facecomp/models/face_detection_yunet_2023mar.onnx}"
 export FACECOMP_ENCODER_MODEL="${FACECOMP_ENCODER_MODEL:-$HERE/usr/share/facecomp/models/face_recognition_sface_2021dec.onnx}"
+# Both encoders are exported up front and --backend picks between them at run
+# time, since AppRun can't know which one was asked for. Only set if the model
+# was actually bundled, so --backend arcface fails with "no model" rather than
+# with a confusing missing-file error from deeper in OpenCV.
+arcface_model="$HERE/usr/share/facecomp/models/arcfaceresnet100-11-int8.onnx"
+if [ -f "$arcface_model" ]; then
+  export FACECOMP_ARCFACE_MODEL="${FACECOMP_ARCFACE_MODEL:-$arcface_model}"
+fi
 exec "$HERE/usr/bin/facecomp" "$@"
 EOF
 chmod +x "$appdir/AppRun"

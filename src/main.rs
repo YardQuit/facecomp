@@ -6,8 +6,7 @@ use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
 
 use facecomp::{
-    confidence_label, embedding_dimensions, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
-    DEFAULT_THRESHOLD,
+    confidence_label, embedding_dimensions, Backend, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
 };
 
 /// Compare a master photo against one or more other photos and report a
@@ -19,7 +18,7 @@ use facecomp::{
     author = "Michael A Jones <yardquit@pm.me>",
     about = "Compare a master photo against one or more other photos and report a percentage match plus a confidence label for each",
     help_template = "{before-help}{name}({version}) Face Comparison\nCopyright (C) 2026 {author}\nLicensed under the GNU General Public License v3.0 (GPL-3.0-or-later);\nsee the LICENSE file distributed with this program for the full text.\n\n{about}\n{usage-heading} {usage}\n\n{all-args}{after-help}\n",
-    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found.\n\nHOW FACES ARE COMPARED:\n    Each face is reduced to an embedding - a fixed list of numbers describing\n    it - and two faces are compared by the cosine similarity between their\n    embeddings. The shipped SFace model produces 128 numbers per face; the\n    exact count for the model in use is reported as `embedding` in the output\n    (`embedding_dimensions` in --json).\n\n    The detector also finds 5 facial landmarks (eyes, nose, mouth corners),\n    but those are used only to align a face before embedding it. They are not\n    themselves compared, so they don't add to the numbers above.\n\nCHOOSING --detection-confidence:\n    This decides which photos yield a face at all; it is not what governs how\n    accurate a comparison is (that is the model, and --threshold). Measured\n    over 64 real-world photographs:\n\n        0.9    face found in 41 (64%)     no false detections\n        0.8    face found in 48 (75%)     no false detections\n        0.7    face found in 59 (92%)     one, on a photo of dogs   [default]\n        0.6    face found in 63 (98%)     two\n        0.5    face found in 64 (100%)    two\n\n    Use 0.8 when every result needs to be trustworthy: it never picked up a\n    non-face, and still finds more faces than 0.9 - there is no reason to run\n    0.9 at all. Keep the 0.7 default when you would rather not silently skip\n    photos; a spurious detection only adds a low-similarity row (the dog photo\n    scored 14%, \"Very unlikely\"). Below 0.6 the detector starts firing on\n    genuinely non-face imagery.\n\n    A marginal detection also gives sloppier landmarks, so the face is aligned\n    less precisely before embedding - a further reason to re-check borderline\n    results at 0.8."
+    after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found.\n\nHOW FACES ARE COMPARED:\n    Each face is reduced to an embedding - a fixed list of numbers describing\n    it - and two faces are compared by the cosine similarity between their\n    embeddings. How many numbers depends on --backend; the exact count for the\n    model in use is reported as `embedding` in the output\n    (`embedding_dimensions` in --json).\n\n    The detector also finds 5 facial landmarks (eyes, nose, mouth corners),\n    but those are used only to align a face before embedding it. They are not\n    themselves compared, so they don't add to the numbers above.\n\nCHOOSING --backend:\n    sface      128 numbers per face; cutoff 0.363, published by OpenCV Zoo\n               [default]\n    arcface    512 numbers per face; no default cutoff, so --threshold is\n               required\n\n    Both detect with YuNet and compare by cosine similarity - they differ only\n    in how a detected face becomes numbers. Measured on one same-person pair\n    against three different people, arcface separated them by 0.6696 to\n    sface's 0.5130, almost entirely by scoring non-matches lower: its highest\n    non-match was 0.0697 against sface's 0.2581.\n\n    arcface has no default --threshold on purpose. A cutoff is a property of\n    the model that produced the embeddings, and no trustworthy value has been\n    derived for this one yet, so it has to be given explicitly rather than\n    guessed. Guessing wouldn't fail loudly - it would quietly mis-score every\n    comparison, the same way --threshold 1.0 once reported an identical face\n    as \"0.0% Almost no chance\".\n\n    Whichever backend is selected, --encoder-model must be the matching\n    weights file.\n\nCHOOSING --detection-confidence:\n    This decides which photos yield a face at all; it is not what governs how\n    accurate a comparison is (that is the model, and --threshold). Measured\n    over 64 real-world photographs:\n\n        0.9    face found in 41 (64%)     no false detections\n        0.8    face found in 48 (75%)     no false detections\n        0.7    face found in 59 (92%)     one, on a photo of dogs   [default]\n        0.6    face found in 63 (98%)     two\n        0.5    face found in 64 (100%)    two\n\n    Use 0.8 when every result needs to be trustworthy: it never picked up a\n    non-face, and still finds more faces than 0.9 - there is no reason to run\n    0.9 at all. Keep the 0.7 default when you would rather not silently skip\n    photos; a spurious detection only adds a low-similarity row (the dog photo\n    scored 14%, \"Very unlikely\"). Below 0.6 the detector starts firing on\n    genuinely non-face imagery.\n\n    A marginal detection also gives sloppier landmarks, so the face is aligned\n    less precisely before embedding - a further reason to re-check borderline\n    results at 0.8."
 )]
 struct Args {
     /// The reference photo every other photo is compared against.
@@ -37,13 +36,27 @@ struct Args {
     #[arg(long, env = "FACECOMP_DETECTOR_MODEL")]
     detector_model: PathBuf,
 
-    /// Path to OpenCV Zoo's face_recognition_sface_2021dec.onnx.
-    #[arg(long, env = "FACECOMP_ENCODER_MODEL")]
-    encoder_model: PathBuf,
+    /// Which embedding model to use: "sface" (128 numbers per face) or
+    /// "arcface" (512). --encoder-model must be the matching weights.
+    #[arg(long, default_value = "sface", value_parser = parse_backend)]
+    backend: Backend,
+
+    /// Path to the embedding model matching --backend. Defaults to
+    /// $FACECOMP_ENCODER_MODEL for sface, $FACECOMP_ARCFACE_MODEL for arcface.
+    #[arg(long)]
+    encoder_model: Option<PathBuf>,
 
     /// Cosine similarity at/above which two faces count as the same person.
-    #[arg(long, default_value_t = DEFAULT_THRESHOLD, value_parser = parse_threshold)]
-    threshold: f64,
+    /// Defaults to 0.363 for sface; has no default for arcface, which has no
+    /// trustworthy value derived yet, so pass one explicitly.
+    #[arg(long, value_parser = parse_threshold)]
+    threshold: Option<f64>,
+
+    /// Report only the N closest-matching photos rather than every one
+    /// compared. Results are always ordered best match first, so this just
+    /// trims the tail. Useful when --slave expands to a large directory.
+    #[arg(long, value_parser = parse_max)]
+    max: Option<usize>,
 
     /// Detector confidence at/above which a candidate counts as a face. Lower
     /// it to find faces in difficult photos; raise it if non-faces are picked up.
@@ -114,6 +127,69 @@ fn parse_detection_confidence(s: &str) -> Result<f32, String> {
     }
 }
 
+/// Parses `--backend`. Kept here rather than as a `clap::ValueEnum` on
+/// [`Backend`] so the library doesn't take a dependency on clap.
+fn parse_backend(s: &str) -> Result<Backend, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "sface" => Ok(Backend::SFace),
+        "arcface" => Ok(Backend::ArcFace),
+        other => Err(format!(
+            "unknown backend `{other}` (expected `sface` or `arcface`)"
+        )),
+    }
+}
+
+/// Rejects `--max 0`, which would silently report nothing at all rather than
+/// erroring - the same class of quietly-wrong output `--threshold 1.0` gave.
+fn parse_max(s: &str) -> Result<usize, String> {
+    let value: usize = s
+        .parse()
+        .map_err(|_| format!("`{s}` is not a whole number"))?;
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err("must be at least 1".to_string())
+    }
+}
+
+/// Resolves which weights file to load, given the backend and what the user
+/// supplied.
+///
+/// `--encoder-model` wins if present. Otherwise each backend reads its own
+/// environment variable, so the AppImage can export both bundled models up
+/// front and let `--backend` decide between them at run time.
+fn resolve_encoder_model(explicit: Option<PathBuf>, backend: Backend) -> Result<PathBuf, String> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+    let var = match backend {
+        Backend::SFace => "FACECOMP_ENCODER_MODEL",
+        Backend::ArcFace => "FACECOMP_ARCFACE_MODEL",
+    };
+    std::env::var_os(var).map(PathBuf::from).ok_or_else(|| {
+        format!("no model for --backend {backend}: pass --encoder-model or set ${var}")
+    })
+}
+
+/// Resolves the same/different cutoff, refusing to invent one.
+///
+/// SFace has a published threshold to fall back on; ArcFace does not, and
+/// guessing would produce confident nonsense rather than an error. Requiring
+/// the flag is the honest failure mode until a value is derived on a pair set
+/// big enough to trust.
+fn resolve_threshold(explicit: Option<f64>, backend: Backend) -> Result<f64, String> {
+    explicit
+        .or_else(|| backend.default_threshold())
+        .ok_or_else(|| {
+            format!(
+                "--backend {backend} has no default --threshold yet, so one must be given \
+                 explicitly.\n       No trustworthy value has been derived for it: two small \
+                 pair sets disagreed by 0.119, far beyond their own ±0.033 spread, so neither \
+                 is usable as a default."
+            )
+        })
+}
+
 #[derive(Serialize)]
 struct MasterComparison {
     photo: PathBuf,
@@ -126,6 +202,7 @@ struct MasterComparison {
 #[derive(Serialize)]
 struct Report {
     master: PathBuf,
+    backend: &'static str,
     threshold: f64,
     embedding_dimensions: i32,
     results: Vec<MasterComparison>,
@@ -161,10 +238,27 @@ fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
 fn main() -> ExitCode {
     let args = Args::parse();
 
+    let encoder_model = match resolve_encoder_model(args.encoder_model, args.backend) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("facecomp: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let threshold = match resolve_threshold(args.threshold, args.backend) {
+        Ok(threshold) => threshold,
+        Err(e) => {
+            eprintln!("facecomp: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let mut comparer = match FaceComparer::new(
         &args.detector_model,
-        &args.encoder_model,
+        &encoder_model,
         args.detection_confidence,
+        args.backend,
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -200,7 +294,7 @@ fn main() -> ExitCode {
                 // rather than assuming there's only one face in frame.
                 let comparisons: Result<Vec<_>, _> = encodings
                     .iter()
-                    .map(|encoding| comparer.compare(&master_encoding, encoding, args.threshold))
+                    .map(|encoding| comparer.compare(&master_encoding, encoding, threshold))
                     .collect();
                 match comparisons {
                     Ok(comparisons) => {
@@ -223,12 +317,22 @@ fn main() -> ExitCode {
         }
     }
 
+    // Closest match first, always. That's the order the question actually gets
+    // asked in, and it keeps --max a plain truncation rather than a flag that
+    // quietly re-sorts as a side effect. The sort is stable, so photos that
+    // tie keep their path order and repeat runs stay reproducible.
+    results.sort_by(|a, b| b.match_percent.total_cmp(&a.match_percent));
+    if let Some(max) = args.max {
+        results.truncate(max);
+    }
+
     let embedding_dims = embedding_dimensions(&master_encoding);
 
     if args.json {
         let report = Report {
             master: args.master,
-            threshold: args.threshold,
+            backend: args.backend.as_str(),
+            threshold,
             embedding_dimensions: embedding_dims,
             results,
             errors: errors.clone(),
@@ -239,6 +343,7 @@ fn main() -> ExitCode {
             eprintln!("warning: {err}");
         }
         println!("master: {}", args.master.display());
+        println!("backend: {}", args.backend);
         println!("embedding: {embedding_dims} dimensions per face\n");
         println!(
             "{} {:>6} {:>10} {:>8}  confidence",

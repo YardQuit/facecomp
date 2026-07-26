@@ -4,3 +4,4 @@
 *.onnx
 /packaging/.tools
 /*.AppImage
+__pycache__/

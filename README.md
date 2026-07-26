@@ -7,9 +7,11 @@ for each — usable as a standalone command-line tool, or from Emacs.
 ## How it works
 
 - `facecomp` (Rust) detects every face in the master photo and in each
-  other photo using OpenCV's YuNet detector, computes a 128-dimension
-  face embedding for each using OpenCV's SFace, and reports the cosine
-  similarity between the master's embedding and every other photo's.
+  other photo using OpenCV's YuNet detector, computes a face embedding
+  for each using the model chosen by `--backend` (SFace by default, or
+  ArcFace — see [Choosing a backend](#choosing-a-backend)), and reports
+  the cosine similarity between the master's embedding and every other
+  photo's.
   Similarity is mapped onto a 0-100% "match" heuristic (see
   [Interpreting the percentage](#interpreting-the-percentage)) and
   onto a qualitative confidence label (see
@@ -24,8 +26,11 @@ for each — usable as a standalone command-line tool, or from Emacs.
 
 - Rust (stable) and Clang/libclang (needed by the `opencv` crate to
   generate bindings).
-- OpenCV **4.10 or newer**, with the `objdetect` and `dnn` modules, plus
-  their headers (`libopencv-dev` or equivalent).
+- OpenCV **4.10 or newer**, with the `objdetect`, `dnn`, `imgproc` and
+  `calib3d` modules, plus their headers (`libopencv-dev` or
+  equivalent). `calib3d` supplies `estimateAffinePartial2D`, which
+  aligns faces for the ArcFace backend; a build without it fails at
+  compile time on missing headers.
 
   **Important:** OpenCV older than roughly 4.10 (including the
   `libopencv-dev` 4.6.0 that Ubuntu 24.04's own apt repos ship) cannot
@@ -51,20 +56,87 @@ default.
 
 ## Model files
 
-`facecomp` needs two of OpenCV Zoo's pretrained model files at
-runtime. They are not checked into this repository (the recognition
-model alone is ~37 MB) and must be downloaded separately:
+`facecomp` needs pretrained model files at runtime. They are not
+checked into this repository (the recognition models are ~37 MB and
+~66 MB) and must be downloaded separately:
 
 - `face_detection_yunet_2023mar.onnx` — detects faces and 5-point
-  landmarks.
+  landmarks. Always required.
 - `face_recognition_sface_2021dec.onnx` — produces the 128-d face
-  embedding.
+  embedding. Required for `--backend sface`, the default.
+- `arcfaceresnet100-11-int8.onnx` — produces the 512-d face embedding.
+  Required only for `--backend arcface`.
 
-Get both from the [OpenCV Zoo](https://github.com/opencv/opencv_zoo)
-repository, under `models/face_detection_yunet/` and
-`models/face_recognition_sface/` respectively (they're stored via Git
-LFS, so a plain file download from GitHub's UI works, but a shallow
-`git clone` without LFS will only get you pointer files).
+The first two come from the [OpenCV
+Zoo](https://github.com/opencv/opencv_zoo) repository, under
+`models/face_detection_yunet/` and `models/face_recognition_sface/`
+respectively. ArcFace comes from the [ONNX Model
+Zoo](https://github.com/onnx/models), under
+`validated/vision/body_analysis/arcface/model/`. All are stored via
+Git LFS, so a plain file download from GitHub's UI works, but a
+shallow `git clone` without LFS will only get you pointer files.
+
+Use the `int8` ArcFace build rather than `fp32`: the latter is 261 MB
+for roughly 5% more separation, which isn't worth quadrupling the
+download or the AppImage.
+
+### Choosing a backend
+
+|                | `sface` (default) | `arcface`      |
+|----------------|-------------------|----------------|
+| Embedding size | 128               | 512            |
+| Model size     | ~37 MB            | ~66 MB (int8)  |
+| Default cutoff | 0.363 (published) | none — see below |
+
+Both backends detect with YuNet and compare by cosine similarity; they
+differ only in how a detected face becomes numbers. Measured on one
+same-person pair against three different people, ArcFace separated
+them by 0.6696 against SFace's 0.5130, almost entirely by scoring
+non-matches lower — its highest non-match was 0.0697, against SFace's
+0.2581.
+
+**ArcFace has no default `--threshold`, on purpose.** A cutoff is a
+property of the model that produced the embeddings, and no trustworthy
+value has been derived for this one yet: two small pair sets disagreed
+by 0.119, far outside their own ±0.033 within-set spread, so neither
+is usable. `facecomp` therefore refuses to run `--backend arcface`
+without an explicit `--threshold` rather than inventing one. That is
+the same reasoning behind rejecting `--threshold 1.0`: a wrong cutoff
+doesn't fail loudly, it quietly mis-scores every comparison.
+
+Until a value is derived on a pair set large enough to be stable
+(LFW's 6000 pairs, cross-checked against a second dataset), treat
+`--backend arcface` as experimental and the number you pass to
+`--threshold` as your own calibration.
+
+`tools/derive_threshold.py` is what derives it. It runs the same
+pipeline `facecomp` does — YuNet detect, 5-point align, embed, cosine
+— over a labelled pair set, then picks the threshold by 10-fold
+cross-validation, choosing it on nine folds and scoring it on the
+tenth. That reports how stable the value is rather than just what it
+is, so one lucky split can't pass for a result:
+
+```sh
+# LFW, standard protocol (pairs.txt + lfw/<Name>/<Name>_0001.jpg)
+python3 tools/derive_threshold.py \
+  --images-dir /path/to/lfw --pairs /path/to/pairs.txt \
+  --detector face_detection_yunet_2023mar.onnx \
+  --recognizer arcfaceresnet100-11-int8.onnx \
+  --backend arcface --det-score 0.5
+
+# any second dataset, as <imgA>\t<imgB>\t<1|0>
+python3 tools/derive_threshold.py --pairs-format tsv ...
+```
+
+Needs `opencv-python` (4.10 or newer) and `numpy`. Two details that
+are easy to get wrong and are baked in: it scores by *balanced*
+accuracy, because plain accuracy rates an "always different"
+classifier at 87% on a typical imbalanced pair set; and it assigns
+folds stratified, because with only a few dozen positive pairs
+sequential folds can contain no same-person pair at all, making that
+fold's score meaningless. It prints a warning when the per-fold spread
+exceeds 0.05 — heed it. That is exactly what disqualified the two
+small sets above.
 
 ## Portable AppImage build
 
@@ -78,12 +150,19 @@ from source and bundles everything into one self-contained
 ```sh
 ./packaging/build-appimage.sh \
   /path/to/face_detection_yunet_2023mar.onnx \
-  /path/to/face_recognition_sface_2021dec.onnx
+  /path/to/face_recognition_sface_2021dec.onnx \
+  /path/to/arcfaceresnet100-11-int8.onnx
 ```
 
-This builds OpenCV (core/imgproc/imgcodecs/objdetect/dnn only, to keep
-build time down — expect roughly 10 minutes on a few cores, cached
-across runs in CI) and `facecomp` in release mode, fetches
+The third argument is optional. Passing it bundles ArcFace too, so the
+AppImage supports `--backend arcface`; this adds ~66 MB, taking the
+result to roughly 105 MB. Omit it for a smaller SFace-only bundle, in
+which case `--backend arcface` reports that no model is available
+rather than failing deeper in OpenCV.
+
+This builds OpenCV (core/imgproc/imgcodecs/objdetect/dnn/calib3d only,
+to keep build time down — expect roughly 10 minutes on a few cores,
+cached across runs in CI) and `facecomp` in release mode, fetches
 `linuxdeploy` and `appimagetool` on first run (cached under
 `packaging/.tools/`), and produces `facecomp-x86_64.AppImage` in the
 repo root. The result:
@@ -96,8 +175,10 @@ repo root. The result:
   `--detector-model`/`--encoder-model` don't need to be passed since
   the AppImage's `AppRun` wrapper points them at the bundled model
   files automatically (still overridable via
-  `FACECOMP_DETECTOR_MODEL`/`FACECOMP_ENCODER_MODEL` if you want to
-  point at different ones).
+  `FACECOMP_DETECTOR_MODEL`/`FACECOMP_ENCODER_MODEL`/`FACECOMP_ARCFACE_MODEL`
+  if you want to point at different ones). Both recognition models are
+  exported up front and `--backend` picks between them at run time,
+  since `AppRun` can't know which one you'll ask for.
 - Works whether or not the target machine has FUSE: if `fusermount`
   isn't available to mount the AppImage, its runtime automatically
   falls back to self-extracting, no `--appimage-extract-and-run` flag
@@ -119,10 +200,12 @@ facecomp \
 
 `--slave` takes one or more photos (or repeat the flag). The master is
 compared against each one (not against itself, and slaves are not
-compared against each other):
+compared against each other), and results are reported closest match
+first:
 
 ```
 master: master.jpg
+backend: sface
 embedding: 128 dimensions per face
 
 photo                           faces similarity  match %  confidence
@@ -154,16 +237,30 @@ glob happens to match the master photo itself, it's excluded
 automatically.
 
 Model paths can also come from environment variables instead of flags:
-`FACECOMP_DETECTOR_MODEL` and `FACECOMP_ENCODER_MODEL`.
+`FACECOMP_DETECTOR_MODEL`, and `FACECOMP_ENCODER_MODEL` or
+`FACECOMP_ARCFACE_MODEL` depending on `--backend`.
 
 Other flags:
 
+- `--backend <sface|arcface>` — which model turns a detected face into
+  numbers (default `sface`). `--encoder-model` must be the matching
+  weights. See [Choosing a backend](#choosing-a-backend).
 - `--threshold <f64>` — the cosine similarity at/above which two faces
-  count as the same person (default `0.363`, the OpenCV Zoo-published
-  recommendation for the SFace model). Must be greater than 0 and less
-  than 1; cosine similarity never exceeds 1.0, and a threshold at or
-  above it would collapse the match-percent scale rather than simply
-  matching nothing, so such values are rejected outright.
+  count as the same person (default `0.363` for `sface`, the OpenCV
+  Zoo-published recommendation; **no default for `arcface`**, which
+  refuses to run without one). Must be greater than 0 and less than 1;
+  cosine similarity never exceeds 1.0, and a threshold at or above it
+  would collapse the match-percent scale rather than simply matching
+  nothing, so such values are rejected outright.
+- `--max <n>` — report only the `n` closest-matching photos instead of
+  every one compared, useful when `--slave` expands to a large
+  directory. Since results are always ordered best match first, this
+  just trims the tail. Must be at least 1, since `--max 0` would report
+  nothing at all rather than erroring.
+
+  It affects presentation only: every photo is still detected, embedded
+  and compared, so warnings and the exit status still account for
+  photos that fall outside the `n` shown.
 - `--detection-confidence <f32>` — how confident YuNet must be before a
   candidate counts as a face (default `0.7`; also settable via
   `FACECOMP_DETECTION_CONFIDENCE`). Lower it if `facecomp` reports "no
@@ -199,11 +296,12 @@ not ground truth.
 Each detected face is reduced to an **embedding** — a fixed-length list
 of numbers describing that face. Two faces are compared by the cosine
 similarity between their embeddings, which is the `similarity` column.
-The shipped SFace model produces **128 numbers per face**, reported as
-the `embedding` line in the output (`embedding_dimensions` in `--json`).
+How many numbers depends on `--backend` — **128 per face** for SFace,
+**512** for ArcFace — reported as the `embedding` line in the output
+(`embedding_dimensions` in `--json`).
 
-Those 128 values are what's actually compared. It's worth separating
-them from a different count that often gets conflated with them: the
+Those values are what's actually compared. It's worth separating them
+from a different count that often gets conflated with them: the
 detector also locates **5 facial landmarks** (both eyes, the nose tip,
 and both mouth corners), but those exist only to align and crop a face
 into a canonical position before it's embedded. They are never compared
@@ -211,8 +309,23 @@ against each other, so a detector reporting more landmarks would not
 mean more points of comparison — only more precise alignment.
 
 If you want more points of comparison, that means a recognition model
-with a larger embedding (ArcFace, for example, produces 512), not a
-detector with more landmarks.
+with a larger embedding — which is what `--backend arcface` selects —
+not a detector with more landmarks.
+
+Alignment is where those 5 landmarks earn their keep, and it is more
+delicate than it looks. SFace aligns internally via OpenCV's
+`alignCrop`. ArcFace is a bare ONNX graph, so `facecomp` aligns for it:
+the landmarks are fitted onto ArcFace's canonical 112×112 layout with
+`estimateAffinePartial2D` and the face warped onto it. YuNet emits its
+landmarks in the same order that layout is written in, so they map
+across directly with no reordering — and it has to stay that way.
+Getting the order wrong doesn't error, doesn't look broken, and doesn't
+even degrade uniformly: feeding them in mirrored order (both eyes and
+both mouth corners swapped, which is what assuming the opposite
+handedness convention gives you) scored a *different* person at 0.573
+against the same person's 0.460 — an inverted verdict, reported with
+full confidence. `tests/arcface_alignment.rs` pins the ordering, and
+`examples/ordering_check.rs` is the tool that measured it end to end.
 
 ### Detection confidence
 
@@ -298,6 +411,27 @@ Load `emacs/facecomp.el` and configure it:
   ;; only to override - see "Detection confidence" above.
   (facecomp-detection-confidence 0.7))
 ```
+
+Every setting above is optional and defaults to "let `facecomp`
+decide", so nothing here pins a value that the binary might later
+change out from under it.
+
+To use ArcFace instead, set the backend and point at its weights.
+`facecomp-threshold` is mandatory in that case — `facecomp` refuses to
+guess a cutoff it hasn't derived, and Emacs will surface that refusal
+as an error rather than a silently wrong result:
+
+```elisp
+(facecomp-backend 'arcface)
+(facecomp-arcface-model "/path/to/arcfaceresnet100-11-int8.onnx")
+(facecomp-threshold 0.45)   ; your own calibration - see "Choosing a backend"
+```
+
+`facecomp-encoder-model` and `facecomp-arcface-model` are separate
+settings on purpose: whichever one matches `facecomp-backend` is the
+one passed, so the weights can't end up disagreeing with the backend
+they're loaded for. `facecomp-max` mirrors `--max` if you want only
+the closest few results.
 
 Then:
 
