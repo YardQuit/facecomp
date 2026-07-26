@@ -17,53 +17,57 @@ use facecomp::{
     version,
     author = "Michael A Jones <yardquit@pm.me>",
     about = "Compare a master photo against one or more other photos and report a percentage match plus a confidence label for each",
-    help_template = "{before-help}{name}({version}) Face Comparison\nCopyright (C) 2026 {author}\nLicensed under the GNU General Public License v3.0 (GPL-3.0-or-later);\nsee the LICENSE file distributed with this program for the full text.\n\n{about}\n{usage-heading} {usage}\n\n{all-args}{after-help}\n",
+    // The prose below is hand-wrapped to fit 80 columns, so there is nothing
+    // to gain from letting clap spread option help wider than that on a large
+    // terminal - it would just make the two halves of --help disagree.
+    max_term_width = 80,
+    // clap wraps everything else but never the usage line, and the generated
+    // one runs to 88 columns. Broken by hand so it fits too - which means it
+    // no longer updates itself, so a test asserts every required argument
+    // still appears here.
+    override_usage = "facecomp --master <PHOTO>... --slave <PHOTO>... --detector-model <FILE>\n                [OPTIONS]",
+    help_template = "{before-help}{name}({version}) Face Comparison\nCopyright (C) 2026 {author}\nLicensed under the GNU General Public License v3.0 (GPL-3.0-or-later);\nsee the LICENSE file distributed with this program for the full text.\n\n{about}\n\n{usage-heading} {usage}\n\n{all-args}{after-help}\n",
     after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found.\n\nSEVERAL MASTER PHOTOS:\n    --master takes more than one photo of the same person. Their embeddings\n    are averaged into one template, which matches more reliably than any\n    single photo: measured leave-one-out over three photographs of one\n    subject, the template scored the held-out probe higher than either\n    enrolment photo in all three folds, widening the margin to the nearest\n    impostor from 0.6556 to 0.6934.\n\n    More photos help; how you choose them appears not to. Picking photos that\n    span different angles was measured against picking similar ones - same\n    people, same held-out probes, only the enrolment differing - and made no\n    difference: -0.0032 +/- 0.0093 of margin, diverse better in 45% of 160\n    identities. Use the confirmed photos you have rather than hunting for\n    angle coverage. Adding the same photograph twice does nothing, since it\n    embeds identically.\n\n    The `agreement` line reports the lowest similarity between any two master\n    photos, and warns below --threshold. Enrolling several photos asserts they\n    are the same person and nothing else checks that: a stray photo of someone\n    else drags the template toward them and then quietly mis-scores every\n    comparison. A disagreeing pair is the only visible symptom.\n\n    Note a template raises genuine scores by design, so a cutoff derived for\n    one-to-one matching is more permissive here than it was calibrated to be.\n    Prefer the similarity column over the match percentage until a threshold\n    is derived for template matching.\n\nCHOOSING MASTER PHOTOS:\n    Measured over 220 people from LFW: each of their photos took a turn as\n    master, scored on how far it separated that person from 120 others.\n    Comparing a person's photos against each other, so the measurement is of\n    the photograph rather than of who is in it:\n\n        frontal view     matters most - a frontal master beat an angled one\n                         in 61% of cases across the 131 people whose photos\n                         spanned pose, worth +0.029 of separation\n        detector score   a weak proxy for the same thing (61%)\n        sharpness        barely (54%)\n        brightness       no (52%)\n        contrast         no (52%)\n        face size in px  no - a coin flip at 51%\n\n    Face size not mattering is the surprising one, and it is worth trusting:\n    every detected face is resampled to 112x112 before embedding, so extra\n    pixels are discarded either way. A high-resolution photo is not a better\n    reference than a modest one, provided a face is detected at all. Don't\n    reject a candidate photo for being small.\n\n    Note the ranking is about each photo on its own. How a *set* of masters is\n    chosen turned out not to matter: picking photos that span different angles\n    scored the same as picking similar ones (-0.003 +/- 0.009 of margin over\n    160 people), so use the confirmed photos you have.\n\n    So prefer a frontal, in-focus photo. Avoid full profile: at about 90\n    degrees one eye and one mouth corner are physically hidden, so the\n    5-point alignment is fitting to positions the detector guessed. That does\n    not error - it produces a confident, meaningless result. Moderate\n    three-quarter views are fine, and are what several --master photos are\n    for.\n\n    Worth knowing before leaning on the ranking above: it was measured on\n    LFW, which is news photography - 92% of its faces are near-frontal, all\n    are well exposed, all are pre-cropped to a uniform size. Across that\n    narrow range most image properties simply don't discriminate. Ordinary\n    case photographs vary far more, so read \"exposure doesn't matter\" as\n    untested outside LFW's range rather than as established.\n\nHOW FACES ARE COMPARED:\n    Each face is reduced to an embedding - a fixed list of numbers describing\n    it - and two faces are compared by the cosine similarity between their\n    embeddings. How many numbers depends on --backend; the exact count for the\n    model in use is reported as `embedding` in the output\n    (`embedding_dimensions` in --json).\n\n    The detector also finds 5 facial landmarks (eyes, nose, mouth corners),\n    but those are used only to align a face before embedding it. They are not\n    themselves compared, so they don't add to the numbers above.\n\nCHOOSING --backend:\n    sface      128 numbers per face; cutoff 0.316 [default]\n    arcface    512 numbers per face; cutoff 0.239\n\n    Both cutoffs are derived over LFW's 6000-pair protocol through this\n    tool's own pipeline, not taken from a model card.\n\n    Both detect with YuNet and compare by cosine similarity - they differ only\n    in how a detected face becomes numbers. Measured over LFW's 6000-pair\n    protocol through this tool's own pipeline, arcface scores 0.9932 balanced\n    accuracy against sface's 0.9887, and separates the classes further: mean\n    similarity 0.6768 vs 0.0045 for arcface, 0.6491 vs 0.0833 for sface. Most\n    of arcface's advantage is in scoring non-matches lower.\n\n    A cutoff is a property of the model that produced the embeddings, so the\n    two are not interchangeable. Passing sface's 0.316 to arcface would miss 49\n    of 3000 genuine LFW pairs where 0.239 misses 37 - it wouldn't fail loudly,\n    it would just quietly reject matches, the same way --threshold 1.0 once\n    reported an identical face as \"0.0% Almost no chance\".\n\n    Whichever backend is selected, --encoder-model must be the matching\n    weights file.\n\nCHOOSING --detection-confidence:\n    This decides which photos yield a face at all; it is not what governs how\n    accurate a comparison is (that is the model, and --threshold). Measured\n    over 64 real-world photographs:\n\n        0.9    face found in 41 (64%)     no false detections\n        0.8    face found in 48 (75%)     no false detections\n        0.7    face found in 59 (92%)     one, on a photo of dogs   [default]\n        0.6    face found in 63 (98%)     two\n        0.5    face found in 64 (100%)    two\n\n    Use 0.8 when every result needs to be trustworthy: it never picked up a\n    non-face, and still finds more faces than 0.9 - there is no reason to run\n    0.9 at all. Keep the 0.7 default when you would rather not silently skip\n    photos; a spurious detection only adds a low-similarity row (the dog photo\n    scored 14%, \"Very unlikely\"). Below 0.6 the detector starts firing on\n    genuinely non-face imagery.\n\n    A marginal detection also gives sloppier landmarks, so the face is aligned\n    less precisely before embedding - a further reason to re-check borderline\n    results at 0.8."
 )]
 struct Args {
-    /// The reference photo every other photo is compared against. Pass several
-    /// confirmed photos of the same person - different angles, expressions,
-    /// lighting - and they are combined into one averaged template, which
-    /// matches more reliably than any single photo.
-    #[arg(long = "master", required = true, num_args = 1..)]
+    /// The reference photo every other photo is compared against. Several
+    /// confirmed photos of the same person are combined into one averaged
+    /// template - see SEVERAL MASTER PHOTOS.
+    #[arg(long = "master", value_name = "PHOTO", required = true, num_args = 1..)]
     masters: Vec<PathBuf>,
 
-    /// A photo to compare against the master; repeat or pass multiple
-    /// values to compare several. Each may be a literal path or a glob
-    /// pattern (e.g. "photos/*.png") - pass a pattern in quotes if your
-    /// shell doesn't expand wildcards itself.
-    #[arg(long = "slave", required = true, num_args = 1..)]
+    /// A photo to compare against the master. Repeat, or pass a glob such
+    /// as "photos/*.png" - quote it if your shell doesn't expand wildcards.
+    #[arg(long = "slave", value_name = "PHOTO", required = true, num_args = 1..)]
     slaves: Vec<String>,
 
     /// Path to OpenCV Zoo's face_detection_yunet_2023mar.onnx.
-    #[arg(long, env = "FACECOMP_DETECTOR_MODEL")]
+    #[arg(long, value_name = "FILE", env = "FACECOMP_DETECTOR_MODEL")]
     detector_model: PathBuf,
 
     /// Which embedding model to use: "sface" (128 numbers per face) or
-    /// "arcface" (512). --encoder-model must be the matching weights.
-    #[arg(long, default_value = "sface", value_parser = parse_backend)]
+    /// "arcface" (512) - see CHOOSING --backend.
+    #[arg(long, value_name = "NAME", default_value = "sface", value_parser = parse_backend)]
     backend: Backend,
 
-    /// Path to the embedding model matching --backend. Defaults to
-    /// $FACECOMP_ENCODER_MODEL for sface, $FACECOMP_ARCFACE_MODEL for arcface.
-    #[arg(long)]
+    /// Weights file matching --backend. Defaults to $FACECOMP_ENCODER_MODEL
+    /// for sface, $FACECOMP_ARCFACE_MODEL for arcface.
+    #[arg(long, value_name = "FILE")]
     encoder_model: Option<PathBuf>,
 
     /// Cosine similarity at/above which two faces count as the same person.
-    /// Defaults to the value derived for the backend in use over LFW's 6000
-    /// pairs: 0.316 for sface, 0.239 for arcface.
-    #[arg(long, value_parser = parse_threshold)]
+    /// Defaults per backend: 0.316 sface, 0.239 arcface.
+    #[arg(long, value_name = "NUM", value_parser = parse_threshold)]
     threshold: Option<f64>,
 
-    /// Report only the N closest-matching photos rather than every one
-    /// compared. Results are always ordered best match first, so this just
-    /// trims the tail. Useful when --slave expands to a large directory.
-    #[arg(long, value_parser = parse_max)]
+    /// Report only the N closest matches. Results are always ordered best
+    /// first, so this trims the tail rather than choosing what is shown.
+    #[arg(long, value_name = "N", value_parser = parse_max)]
     max: Option<usize>,
 
-    /// Detector confidence at/above which a candidate counts as a face. Lower
-    /// it to find faces in difficult photos; raise it if non-faces are picked up.
-    #[arg(long, env = "FACECOMP_DETECTION_CONFIDENCE",
+    /// Detector confidence at/above which a candidate counts as a face - see
+    /// CHOOSING --detection-confidence.
+    #[arg(long, value_name = "NUM", env = "FACECOMP_DETECTION_CONFIDENCE",
           default_value_t = DEFAULT_DETECTION_CONFIDENCE,
           value_parser = parse_detection_confidence)]
     detection_confidence: f32,
@@ -418,5 +422,71 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use clap::CommandFactory;
+    use unicode_width::UnicodeWidthStr;
+
+    /// The width `--help` is laid out for: what `max_term_width` caps at, and
+    /// what the hand-wrapped `after_help` prose is written to.
+    const HELP_WIDTH: usize = 80;
+
+    /// Names the lines of `help` that print wider than [`HELP_WIDTH`].
+    fn over_width(help: &str) -> Vec<&str> {
+        help.lines()
+            .filter(|l| UnicodeWidthStr::width(*l) > HELP_WIDTH)
+            .collect()
+    }
+
+    /// `--help` used to emit each option's help as one unbroken line - 261
+    /// columns for `--master` - which the terminal then folded with no
+    /// continuation indent, running the options together.
+    ///
+    /// The width is pinned rather than inherited so this asserts the same
+    /// thing whether or not the runner has a terminal attached. It catches
+    /// content clap can't wrap for us: the hand-written usage line, and the
+    /// tables in `after_help`.
+    #[test]
+    fn help_fits_eighty_columns() {
+        let help = Args::command()
+            .term_width(HELP_WIDTH)
+            .render_long_help()
+            .to_string();
+        let over = over_width(&help);
+        assert!(over.is_empty(), "lines wider than {HELP_WIDTH}: {over:#?}");
+    }
+
+    /// Guards `max_term_width`, which the test above pins away: without the
+    /// cap, help renders at clap's 100-column default and the regression
+    /// ships unnoticed. Assumes captured output, as `cargo test` gives it -
+    /// clap then has no terminal to measure and falls back to that default.
+    #[test]
+    fn help_width_is_capped() {
+        let help = Args::command().render_long_help().to_string();
+        let over = over_width(&help);
+        assert!(
+            over.is_empty(),
+            "uncapped help exceeds {HELP_WIDTH}: {over:#?}"
+        );
+    }
+
+    /// The usage line is written out by hand because clap never wraps it, so
+    /// nothing keeps it honest as arguments change. A required argument
+    /// missing from usage is a lie about how the tool is invoked.
+    #[test]
+    fn usage_lists_every_required_argument() {
+        let cmd = Args::command();
+        let usage = cmd.clone().render_usage().to_string();
+        for arg in cmd.get_arguments().filter(|a| a.is_required_set()) {
+            let flag = format!(
+                "--{}",
+                arg.get_long().expect("every argument has a long form")
+            );
+            assert!(usage.contains(&flag), "usage omits {flag}: {usage}");
+        }
     }
 }
