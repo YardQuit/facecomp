@@ -6,7 +6,7 @@
 //! the template toward whichever photo happened to embed with the largest
 //! magnitude, which is not a property of the person.
 
-use facecomp::{centroid, enrolment_agreement, FaceEncoding};
+use facecomp::{build_template, centroid, enrolment_agreement, FaceEncoding, Template};
 use opencv::core::{Mat, MatTraitConst};
 
 fn embedding(values: &[f32]) -> FaceEncoding {
@@ -109,4 +109,54 @@ fn agreement_reports_the_worst_pair() {
 fn a_single_photo_has_nothing_to_cross_check() {
     let agreement = enrolment_agreement(&[embedding(&[1.0, 0.0])]).expect("agreement");
     assert_eq!(agreement, None);
+}
+
+#[test]
+fn centroid_collapses_to_one_vector_and_max_keeps_them_all() {
+    // The property the caller relies on to have a single code path: whichever
+    // strategy is chosen, it gets back a list to score against and keeps the
+    // best. Only the length differs.
+    let photos = [
+        embedding(&[1.0, 0.0]),
+        embedding(&[0.0, 1.0]),
+        embedding(&[0.0, -1.0]),
+    ];
+    assert_eq!(
+        build_template(&photos, Template::Centroid)
+            .expect("centroid")
+            .len(),
+        1
+    );
+    assert_eq!(
+        build_template(&photos, Template::Max).expect("max").len(),
+        3
+    );
+}
+
+#[test]
+fn max_preserves_each_photo_rather_than_blending_them() {
+    // The whole reason max exists: two genuinely different looks stay
+    // separately matchable instead of being averaged into one that resembles
+    // neither. Scaled inputs to confirm they're normalised on the way out,
+    // since the comparison treats a dot product as a cosine.
+    let photos = [embedding(&[7.0, 0.0]), embedding(&[0.0, 2.0])];
+    let template = build_template(&photos, Template::Max).expect("max");
+
+    assert_eq!(values(&template[0]), vec![1.0, 0.0]);
+    assert_eq!(values(&template[1]), vec![0.0, 1.0]);
+    for vector in &template {
+        assert!(
+            (norm(vector) - 1.0).abs() < 1e-6,
+            "each kept photo is unit length"
+        );
+    }
+
+    // Averaging the same pair produces a vector matching neither original as
+    // well as it matches itself - which is the trade-off, stated as a number.
+    let blended = centroid(&photos).expect("centroid");
+    assert!(
+        (values(&blended)[0] - 0.70710678).abs() < 1e-6,
+        "centroid sits between the two looks, at {:?}",
+        values(&blended)
+    );
 }
