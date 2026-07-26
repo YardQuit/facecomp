@@ -36,11 +36,11 @@
 ;; shells out to it and renders the result in an Emacs buffer.
 ;;
 ;; Usage:
-;; - `M-x facecomp-compare' prompts for a master photo, then either a
-;;   glob pattern (e.g. "*.png") or image files picked one at a time.
+;; - `M-x facecomp-compare' prompts for a master photo, then for the
+;;   photos to compare against it, picked one at a time.
 ;; - Called from Dired with two or more files marked, the first marked
 ;;   file is used as the master and the rest as the photos to compare
-;;   against it.
+;;   against it.  This is the way to select many photos at once.
 ;;
 ;; Setup:
 ;; Make sure the `facecomp' executable is on PATH, or set
@@ -118,18 +118,22 @@ user mistake worth catching early, rather than silently ignored."
       (setq args (nconc args (list "--encoder-model" facecomp-encoder-model))))
     args))
 
-(defun facecomp--read-targets ()
-  "Prompt for a glob pattern, or, if left blank, files picked one at a time."
-  (let ((pattern (read-string
-                  "Photos to compare against master (glob, e.g. *.png; blank to pick one at a time): ")))
-    (if (not (string-empty-p pattern))
-        (or (file-expand-wildcards pattern t)
-            (user-error "No files matched `%s'" pattern))
-      (let (files)
-        (push (read-file-name "Photo: " nil nil t) files)
-        (while (y-or-n-p (format "Add another photo (%d selected so far)? " (length files)))
-          (push (read-file-name (format "Photo %d: " (1+ (length files))) nil nil t) files))
-        (mapcar #'expand-file-name (nreverse files))))))
+(defun facecomp--read-targets (&optional master)
+  "Prompt for photos to compare against the master, one at a time.
+
+Picking starts in MASTER's own directory, which is where the photos
+being compared almost always live - rather than in `default-directory',
+which is just wherever \\[execute-extended-command] happened to be
+invoked from.
+
+For selecting many photos at once, mark them in Dired and call
+`facecomp-compare' from there."
+  (let ((dir (or (and master (file-name-directory master)) default-directory))
+        files)
+    (push (read-file-name "Photo: " dir nil t) files)
+    (while (y-or-n-p (format "Add another photo (%d selected so far)? " (length files)))
+      (push (read-file-name (format "Photo %d: " (1+ (length files))) dir nil t) files))
+    (mapcar #'expand-file-name (nreverse files))))
 
 (defun facecomp--run (master targets &optional confidence)
   "Run the facecomp executable comparing MASTER against TARGETS.
@@ -224,9 +228,10 @@ Very likely, Likely, ...).
 
 When called from a Dired buffer with two or more files marked, prompts
 for which of the marked files is MASTER (defaulting to the topmost one
-in the buffer) and uses the rest as TARGETS. Otherwise prompts for a
-master photo, then either a glob pattern \(e.g. \"*.png\"\) or photos
-picked one at a time.
+in the buffer) and uses the rest as TARGETS. That is the way to select
+many photos at once. Otherwise prompts for a master photo, then for
+the photos to compare against it, picked one at a time starting in the
+master's own directory.
 
 With a prefix argument, also prompts for a detector CONFIDENCE to use
 for this run only, leaving `facecomp-detection-confidence' alone. Use
@@ -238,7 +243,7 @@ having to change your configuration and change it back."
              (>= (length (dired-get-marked-files)) 2))
         (facecomp--choose-master (dired-get-marked-files))
       (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
-        (list master (facecomp--read-targets))))
+        (list master (facecomp--read-targets master))))
     ;; Read last, so the prefix-arg prompt doesn't precede choosing photos.
     (list (when current-prefix-arg (facecomp--read-confidence)))))
   (when (null targets)
