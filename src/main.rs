@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -21,9 +21,12 @@ use facecomp::{
     after_help = "CONFIDENCE LABELS:\n    Almost certain    95-99%\n    Very likely       80-95%\n    Likely            55-80%\n    Even chance       45-55%\n    Unlikely          20-45%\n    Very unlikely      5-20%\n    Almost no chance   1-5%\n\n    Publisher: Office of the Director of National Intelligence (ODNI)\n\nMULTIPLE FACES:\n    If a --slave photo has more than one person in it, every face found is\n    compared against the master and the best match is reported. The `faces`\n    column (or `faces_detected` in --json) shows how many were found.\n\nHOW FACES ARE COMPARED:\n    Each face is reduced to an embedding - a fixed list of numbers describing\n    it - and two faces are compared by the cosine similarity between their\n    embeddings. How many numbers depends on --backend; the exact count for the\n    model in use is reported as `embedding` in the output\n    (`embedding_dimensions` in --json).\n\n    The detector also finds 5 facial landmarks (eyes, nose, mouth corners),\n    but those are used only to align a face before embedding it. They are not\n    themselves compared, so they don't add to the numbers above.\n\nCHOOSING --backend:\n    sface      128 numbers per face; cutoff 0.363, published by OpenCV Zoo\n               [default]\n    arcface    512 numbers per face; no default cutoff, so --threshold is\n               required\n\n    Both detect with YuNet and compare by cosine similarity - they differ only\n    in how a detected face becomes numbers. Measured on one same-person pair\n    against three different people, arcface separated them by 0.6696 to\n    sface's 0.5130, almost entirely by scoring non-matches lower: its highest\n    non-match was 0.0697 against sface's 0.2581.\n\n    arcface has no default --threshold on purpose. A cutoff is a property of\n    the model that produced the embeddings, and no trustworthy value has been\n    derived for this one yet, so it has to be given explicitly rather than\n    guessed. Guessing wouldn't fail loudly - it would quietly mis-score every\n    comparison, the same way --threshold 1.0 once reported an identical face\n    as \"0.0% Almost no chance\".\n\n    Whichever backend is selected, --encoder-model must be the matching\n    weights file.\n\nCHOOSING --detection-confidence:\n    This decides which photos yield a face at all; it is not what governs how\n    accurate a comparison is (that is the model, and --threshold). Measured\n    over 64 real-world photographs:\n\n        0.9    face found in 41 (64%)     no false detections\n        0.8    face found in 48 (75%)     no false detections\n        0.7    face found in 59 (92%)     one, on a photo of dogs   [default]\n        0.6    face found in 63 (98%)     two\n        0.5    face found in 64 (100%)    two\n\n    Use 0.8 when every result needs to be trustworthy: it never picked up a\n    non-face, and still finds more faces than 0.9 - there is no reason to run\n    0.9 at all. Keep the 0.7 default when you would rather not silently skip\n    photos; a spurious detection only adds a low-similarity row (the dog photo\n    scored 14%, \"Very unlikely\"). Below 0.6 the detector starts firing on\n    genuinely non-face imagery.\n\n    A marginal detection also gives sloppier landmarks, so the face is aligned\n    less precisely before embedding - a further reason to re-check borderline\n    results at 0.8."
 )]
 struct Args {
-    /// The reference photo every other photo is compared against.
-    #[arg(long)]
-    master: PathBuf,
+    /// The reference photo every other photo is compared against. Pass several
+    /// confirmed photos of the same person - different angles, expressions,
+    /// lighting - and they are combined into one averaged template, which
+    /// matches more reliably than any single photo.
+    #[arg(long = "master", required = true, num_args = 1..)]
+    masters: Vec<PathBuf>,
 
     /// A photo to compare against the master; repeat or pass multiple
     /// values to compare several. Each may be a literal path or a glob
@@ -98,9 +101,7 @@ fn pad_to_width(s: &str, width: usize) -> String {
 /// as "0.0% Almost no chance", and 1.5 reported a stranger as "100% Almost
 /// certain". Refusing the value up front is the only honest option.
 fn parse_threshold(s: &str) -> Result<f64, String> {
-    let value: f64 = s
-        .parse()
-        .map_err(|_| format!("`{s}` is not a number"))?;
+    let value: f64 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
     if value > 0.0 && value < 1.0 {
         Ok(value)
     } else {
@@ -117,9 +118,7 @@ fn parse_threshold(s: &str) -> Result<f64, String> {
 /// candidate the network proposes - 0 turned a single portrait into 1543
 /// "faces" and reported a best match against the noise.
 fn parse_detection_confidence(s: &str) -> Result<f32, String> {
-    let value: f32 = s
-        .parse()
-        .map_err(|_| format!("`{s}` is not a number"))?;
+    let value: f32 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
     if value > 0.0 && value <= 1.0 {
         Ok(value)
     } else {
@@ -201,18 +200,22 @@ struct MasterComparison {
 
 #[derive(Serialize)]
 struct Report {
-    master: PathBuf,
+    masters: Vec<PathBuf>,
     backend: &'static str,
     threshold: f64,
     embedding_dimensions: i32,
+    /// Lowest similarity between any two master photos; absent when only one
+    /// was given, since there is nothing to cross-check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enrolment_agreement: Option<f64>,
     results: Vec<MasterComparison>,
     errors: Vec<String>,
 }
 
 /// Expands each pattern that looks like a glob (contains `*`, `?`, or `[`)
-/// via the filesystem; everything else is taken as a literal path. The
-/// master photo is excluded in case a glob happens to sweep it up.
-fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
+/// via the filesystem; everything else is taken as a literal path. Every
+/// master photo is excluded, in case a glob happens to sweep one up.
+fn expand_slaves(masters: &[PathBuf], patterns: &[String]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for pattern in patterns {
         if pattern.contains(['*', '?', '[']) {
@@ -225,10 +228,13 @@ fn expand_slaves(master: &Path, patterns: &[String]) -> Vec<PathBuf> {
         }
     }
 
-    let master_canon = master.canonicalize().ok();
-    paths.retain(|p| match (&master_canon, p.canonicalize()) {
-        (Some(m), Ok(pc)) => &pc != m,
-        _ => p != master,
+    let canon: Vec<Option<PathBuf>> = masters.iter().map(|m| m.canonicalize().ok()).collect();
+    paths.retain(|p| {
+        let pc = p.canonicalize().ok();
+        !masters.iter().zip(&canon).any(|(m, mc)| match (mc, &pc) {
+            (Some(m), Some(p)) => m == p,
+            _ => m == p,
+        })
     });
     paths.sort();
     paths.dedup();
@@ -267,7 +273,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let slaves = expand_slaves(&args.master, &args.slaves);
+    let slaves = expand_slaves(&args.masters, &args.slaves);
     if slaves.is_empty() {
         eprintln!(
             "facecomp: no slave photos found (after expanding glob patterns and excluding the master)"
@@ -277,10 +283,32 @@ fn main() -> ExitCode {
 
     let mut errors = Vec::new();
 
-    let master_encoding = match comparer.encode_face(&args.master) {
+    // Every master photo is embedded, then averaged into one template. A single
+    // photo takes this path too and comes out unchanged apart from being
+    // normalised, which the comparison is invariant to.
+    let mut master_encodings = Vec::with_capacity(args.masters.len());
+    for master in &args.masters {
+        match comparer.encode_face(master) {
+            Ok(e) => master_encodings.push(e),
+            Err(e) => {
+                eprintln!("facecomp: master photo: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let agreement = match facecomp::enrolment_agreement(&master_encodings) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("facecomp: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let master_encoding = match facecomp::centroid(&master_encodings) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("facecomp: master photo: {e}");
+            eprintln!("facecomp: combining master photos: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -330,10 +358,11 @@ fn main() -> ExitCode {
 
     if args.json {
         let report = Report {
-            master: args.master,
+            masters: args.masters,
             backend: args.backend.as_str(),
             threshold,
             embedding_dimensions: embedding_dims,
+            enrolment_agreement: agreement,
             results,
             errors: errors.clone(),
         };
@@ -342,7 +371,28 @@ fn main() -> ExitCode {
         for err in &errors {
             eprintln!("warning: {err}");
         }
-        println!("master: {}", args.master.display());
+        match args.masters.as_slice() {
+            [one] => println!("master: {}", one.display()),
+            many => {
+                println!("master: {} photos averaged into one template", many.len());
+                for m in many {
+                    println!("  {}", m.display());
+                }
+            }
+        }
+        // Surfaced because nothing else can catch a stray photo of the wrong
+        // person in the enrolment set: it drags the template toward them and
+        // then mis-scores everything, silently. A pair that disagrees with the
+        // rest is the only visible symptom.
+        if let Some(agreement) = agreement {
+            println!("agreement: {agreement:.4} (lowest similarity between master photos)");
+            if agreement < threshold {
+                println!(
+                    "  WARNING: below --threshold {threshold:.4} - these may not all be the \
+                     same person, and the template is only as good as its inputs"
+                );
+            }
+        }
         println!("backend: {}", args.backend);
         println!("embedding: {embedding_dims} dimensions per face\n");
         println!(

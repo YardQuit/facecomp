@@ -248,6 +248,79 @@ pub fn embedding_dimensions(encoding: &FaceEncoding) -> i32 {
     encoding.cols()
 }
 
+/// L2-normalises an embedding, so its dot product with another normalised one
+/// is the cosine between them.
+fn normalised(encoding: &FaceEncoding) -> Result<FaceEncoding, CvError> {
+    let mut unit = Mat::default();
+    cv_core::normalize(
+        encoding,
+        &mut unit,
+        1.0,
+        0.0,
+        NORM_L2,
+        -1,
+        &cv_core::no_array(),
+    )?;
+    Ok(unit)
+}
+
+/// Combines several embeddings of one person into a single template.
+///
+/// A single photograph is one noisy sample of an identity: it carries that
+/// day's lighting, that angle, that expression as well as the face. Averaging
+/// several samples cancels the nuisance variation and leaves what they share,
+/// which is the person. Measured leave-one-out over three photographs of one
+/// subject - enrol two, probe the held-out third - the centroid scored the
+/// genuine probe above *either* enrolment photo alone in all three folds, and
+/// widened the margin to the nearest impostor from 0.6556 to 0.6934.
+///
+/// Each embedding is normalised before averaging so a photo can't dominate by
+/// magnitude, and the mean is renormalised so the result lands back on the unit
+/// hypersphere that [`FaceComparer::compare`] assumes. That also makes this
+/// safe for either backend, including SFace, whose raw features are not
+/// normalised.
+///
+/// The gain comes from genuine variety - different sessions, angles,
+/// expressions. Near-duplicate photographs produce near-identical embeddings,
+/// so their centroid barely moves from any one of them and buys nothing.
+pub fn centroid(encodings: &[FaceEncoding]) -> Result<FaceEncoding, CvError> {
+    let mut sum = normalised(&encodings[0])?;
+    for encoding in &encodings[1..] {
+        let unit = normalised(encoding)?;
+        let mut acc = Mat::default();
+        cv_core::add(&sum, &unit, &mut acc, &cv_core::no_array(), -1)?;
+        sum = acc;
+    }
+    normalised(&sum)
+}
+
+/// The lowest cosine similarity between any two embeddings in an enrolment set.
+///
+/// Enrolling several photographs assumes they are all the same person, and
+/// nothing checks that assumption - a stray photo of someone else silently
+/// drags the centroid toward them, which then quietly mis-scores every
+/// comparison made against it. It shows up immediately here, as a pair that
+/// disagrees with the rest.
+///
+/// Returns `None` for a set of fewer than two, where there is nothing to
+/// cross-check.
+pub fn enrolment_agreement(encodings: &[FaceEncoding]) -> Result<Option<f64>, CvError> {
+    if encodings.len() < 2 {
+        return Ok(None);
+    }
+    let units: Vec<FaceEncoding> = encodings
+        .iter()
+        .map(normalised)
+        .collect::<Result<_, CvError>>()?;
+    let mut worst = f64::INFINITY;
+    for (i, a) in units.iter().enumerate() {
+        for b in &units[i + 1..] {
+            worst = worst.min(a.dot(b)?);
+        }
+    }
+    Ok(Some(worst))
+}
+
 #[derive(Debug)]
 pub enum FacecompError {
     Image(PathBuf, String),
