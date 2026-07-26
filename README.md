@@ -171,7 +171,8 @@ facecomp \
 
 `--slave` takes one or more photos (or repeat the flag). The master is
 compared against each one (not against itself, and slaves are not
-compared against each other):
+compared against each other), and results are reported closest match
+first:
 
 ```
 master: master.jpg
@@ -224,9 +225,13 @@ Other flags:
   nothing, so such values are rejected outright.
 - `--max <n>` — report only the `n` closest-matching photos instead of
   every one compared, useful when `--slave` expands to a large
-  directory. Results are ranked best-first when this is given; without
-  it they stay in the order the photos were supplied. Must be at least
-  1, since `--max 0` would report nothing at all rather than erroring.
+  directory. Since results are always ordered best match first, this
+  just trims the tail. Must be at least 1, since `--max 0` would report
+  nothing at all rather than erroring.
+
+  It affects presentation only: every photo is still detected, embedded
+  and compared, so warnings and the exit status still account for
+  photos that fall outside the `n` shown.
 - `--detection-confidence <f32>` — how confident YuNet must be before a
   candidate counts as a face (default `0.7`; also settable via
   `FACECOMP_DETECTION_CONFIDENCE`). Lower it if `facecomp` reports "no

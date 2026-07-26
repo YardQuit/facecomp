@@ -53,7 +53,8 @@ struct Args {
     threshold: Option<f64>,
 
     /// Report only the N closest-matching photos rather than every one
-    /// compared. Useful when --slave expands to a large directory.
+    /// compared. Results are always ordered best match first, so this just
+    /// trims the tail. Useful when --slave expands to a large directory.
     #[arg(long, value_parser = parse_max)]
     max: Option<usize>,
 
@@ -316,11 +317,12 @@ fn main() -> ExitCode {
         }
     }
 
-    // Asking for the closest N matches only means something once they're
-    // ranked, so --max sorts before truncating. Without it the photos stay in
-    // the order they were given, which is what every previous version did.
+    // Closest match first, always. That's the order the question actually gets
+    // asked in, and it keeps --max a plain truncation rather than a flag that
+    // quietly re-sorts as a side effect. The sort is stable, so photos that
+    // tie keep their path order and repeat runs stay reproducible.
+    results.sort_by(|a, b| b.match_percent.total_cmp(&a.match_percent));
     if let Some(max) = args.max {
-        results.sort_by(|a, b| b.match_percent.total_cmp(&a.match_percent));
         results.truncate(max);
     }
 
