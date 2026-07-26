@@ -264,64 +264,6 @@ fn normalised(encoding: &FaceEncoding) -> Result<FaceEncoding, CvError> {
     Ok(unit)
 }
 
-/// How several master photos are combined into something to match against.
-///
-/// The choice is a real trade-off, not a tuning knob. Both are exposed because
-/// which one is right depends on what the enrolment photos actually contain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Template {
-    /// Average the photos into one vector. Robust and cheap, and the right
-    /// default: averaging cancels per-photo nuisance variation - lighting,
-    /// angle, expression - and leaves what the photos share.
-    ///
-    /// Its weakness is genuinely multi-modal appearance. Glasses on and glasses
-    /// off average into a face that appears in no photograph, and matches both
-    /// originals slightly worse than either would alone.
-    #[default]
-    Centroid,
-    /// Keep every photo; a probe scores as its best match against any one of
-    /// them. Handles multi-modal appearance, where averaging would blur two
-    /// genuinely different looks together.
-    ///
-    /// The cost is false accepts, and it grows with the enrolment set: an
-    /// impostor only has to resemble *one* photo to score highly, and taking a
-    /// maximum over more comparisons means more chances to get unlucky. Prefer
-    /// [`Template::Centroid`] unless the enrolment photos really do show
-    /// distinct looks.
-    Max,
-}
-
-impl Template {
-    /// Lowercase name used by the CLI flag and in `--json` output.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Template::Centroid => "centroid",
-            Template::Max => "max",
-        }
-    }
-}
-
-impl fmt::Display for Template {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Reduces enrolment embeddings to the vectors a probe gets scored against.
-///
-/// Both strategies come out as a list, so the caller has one code path: score
-/// against every vector and keep the best. Centroid returns a single averaged
-/// vector, Max returns the enrolment set itself, normalised.
-pub fn build_template(
-    encodings: &[FaceEncoding],
-    strategy: Template,
-) -> Result<Vec<FaceEncoding>, CvError> {
-    match strategy {
-        Template::Centroid => Ok(vec![centroid(encodings)?]),
-        Template::Max => encodings.iter().map(normalised).collect(),
-    }
-}
-
 /// Combines several embeddings of one person into a single template.
 ///
 /// A single photograph is one noisy sample of an identity: it carries that

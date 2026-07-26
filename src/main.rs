@@ -6,8 +6,7 @@ use serde::Serialize;
 use unicode_width::UnicodeWidthStr;
 
 use facecomp::{
-    confidence_label, embedding_dimensions, Backend, FaceComparer, Template,
-    DEFAULT_DETECTION_CONFIDENCE,
+    confidence_label, embedding_dimensions, Backend, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
 };
 
 /// Compare a master photo against one or more other photos and report a
@@ -28,12 +27,6 @@ struct Args {
     /// matches more reliably than any single photo.
     #[arg(long = "master", required = true, num_args = 1..)]
     masters: Vec<PathBuf>,
-
-    /// How to combine several --master photos: "centroid" averages them into
-    /// one vector, "max" keeps them all and takes each photo's best match.
-    /// Ignored when only one master is given.
-    #[arg(long, default_value = "centroid", value_parser = parse_template)]
-    template: Template,
 
     /// A photo to compare against the master; repeat or pass multiple
     /// values to compare several. Each may be a literal path or a glob
@@ -145,18 +138,6 @@ fn parse_backend(s: &str) -> Result<Backend, String> {
     }
 }
 
-/// Parses `--template`. Kept here rather than as a `clap::ValueEnum` on
-/// [`Template`] so the library doesn't take a dependency on clap.
-fn parse_template(s: &str) -> Result<Template, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "centroid" => Ok(Template::Centroid),
-        "max" => Ok(Template::Max),
-        other => Err(format!(
-            "unknown template strategy `{other}` (expected `centroid` or `max`)"
-        )),
-    }
-}
-
 /// Rejects `--max 0`, which would silently report nothing at all rather than
 /// erroring - the same class of quietly-wrong output `--threshold 1.0` gave.
 fn parse_max(s: &str) -> Result<usize, String> {
@@ -220,9 +201,6 @@ struct MasterComparison {
 #[derive(Serialize)]
 struct Report {
     masters: Vec<PathBuf>,
-    /// How the master photos were combined; absent when only one was given.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    template: Option<&'static str>,
     backend: &'static str,
     threshold: f64,
     embedding_dimensions: i32,
@@ -327,8 +305,8 @@ fn main() -> ExitCode {
         }
     };
 
-    let template = match facecomp::build_template(&master_encodings, args.template) {
-        Ok(t) => t,
+    let master_encoding = match facecomp::centroid(&master_encodings) {
+        Ok(e) => e,
         Err(e) => {
             eprintln!("facecomp: combining master photos: {e}");
             return ExitCode::FAILURE;
@@ -339,17 +317,12 @@ fn main() -> ExitCode {
     for slave in &slaves {
         match comparer.encode_all_faces(slave) {
             Ok(encodings) => {
-                // Two independent reasons to keep the best of several scores,
-                // handled the same way. A slave photo may hold more than one
-                // person, so every face found is compared rather than assuming
-                // one is in frame; and --template max scores against every
-                // enrolment photo rather than one averaged vector. Centroid
-                // reduces its side of that to a single vector, so this collapses
-                // back to the original behaviour without a special case.
+                // A slave photo may contain more than one person; compare the
+                // master against every face found and keep the best match,
+                // rather than assuming there's only one face in frame.
                 let comparisons: Result<Vec<_>, _> = encodings
                     .iter()
-                    .flat_map(|encoding| template.iter().map(move |vector| (vector, encoding)))
-                    .map(|(vector, encoding)| comparer.compare(vector, encoding, threshold))
+                    .map(|encoding| comparer.compare(&master_encoding, encoding, threshold))
                     .collect();
                 match comparisons {
                     Ok(comparisons) => {
@@ -381,11 +354,10 @@ fn main() -> ExitCode {
         results.truncate(max);
     }
 
-    let embedding_dims = embedding_dimensions(&template[0]);
+    let embedding_dims = embedding_dimensions(&master_encoding);
 
     if args.json {
         let report = Report {
-            template: (args.masters.len() > 1).then(|| args.template.as_str()),
             masters: args.masters,
             backend: args.backend.as_str(),
             threshold,
@@ -402,11 +374,7 @@ fn main() -> ExitCode {
         match args.masters.as_slice() {
             [one] => println!("master: {}", one.display()),
             many => {
-                let how = match args.template {
-                    Template::Centroid => "averaged into one template",
-                    Template::Max => "kept separate, best match wins",
-                };
-                println!("master: {} photos, {how}", many.len());
+                println!("master: {} photos averaged into one template", many.len());
                 for m in many {
                     println!("  {}", m.display());
                 }
