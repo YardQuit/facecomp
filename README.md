@@ -548,16 +548,30 @@ the closest few results.
 
 Then:
 
-- `M-x facecomp-compare` prompts for a master photo, then for the
-  photos to compare against it, picked one at a time. Picking starts
-  in the master photo's own directory rather than wherever you invoked
-  `M-x` from. To select many photos at once, use the Dired route below.
-- Or mark two or more files in Dired and run `M-x facecomp-compare` —
-  you'll be prompted for which of the marked files is the master
-  (defaulting to the topmost one in the Dired listing), and the rest
-  are compared against it. This is a real prompt rather than "whichever
-  one you marked first," since Dired itself doesn't track marking
-  order - only buffer order.
+- `M-x facecomp-compare` prompts for a master photo, asks whether you
+  want to add another of the *same person*, and repeats until you say
+  no — then prompts for the photos to compare against them, one at a
+  time. Picking starts in the first master's own directory rather than
+  wherever you invoked `M-x` from. Answer no at the first prompt for
+  the ordinary one-photo case. To select many photos at once, use the
+  Dired route below.
+- Or mark files in Dired and run `M-x facecomp-compare` — you'll be
+  prompted for which of the marked files are masters, and the rest are
+  compared against them. **Several can be given, comma-separated**, so
+  a set of confirmed photos of one person becomes a single averaged
+  template; pressing RET with nothing typed takes the topmost. This is
+  a real prompt rather than "whichever one you marked first," since
+  Dired itself doesn't track marking order - only buffer order.
+
+  Giving several masters is worth doing when you have them — see
+  [Several master photos](#several-master-photos) for the measurement.
+  The `*facecomp*` buffer then lists them, followed by an `agreement`
+  line reporting the lowest similarity between any two, with a warning
+  when it falls below the cutoff. That warning is the only thing
+  standing between you and a stray photo of the wrong person quietly
+  dragging the template toward them: enrolling Obama and Biden
+  together drops a genuine Obama match from 89.7% to 73.4%, with
+  nothing else to show for it.
 - `C-u M-x facecomp-compare` additionally prompts for a detection
   confidence to use for that run only (defaulting to `0.8`), leaving
   `facecomp-detection-confidence` untouched. This is the Emacs

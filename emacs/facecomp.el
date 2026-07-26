@@ -163,6 +163,29 @@ so the weights can never disagree with the backend they're loaded for."
       (setq args (nconc args (list "--encoder-model" (cdr encoder)))))
     args))
 
+(defun facecomp--read-masters ()
+  "Prompt for one or more photos of the person being looked for.
+
+Several photos of the *same person* are averaged into one template,
+which matches more reliably than any single one: a single photograph
+carries that day's lighting, angle and expression as well as the face,
+and averaging cancels what they don't share.
+
+Pick photos that genuinely differ - different sessions, angles,
+expressions.  Near-duplicates embed almost identically, so averaging
+them buys nothing.  Answer no at the first prompt for the ordinary
+one-photo case."
+  (let ((first (expand-file-name (read-file-name "Master photo: " nil nil t))))
+    (let ((files (list first)))
+      (while (y-or-n-p
+              (format "Add another photo of the SAME person (%d so far)? "
+                      (length files)))
+        (push (expand-file-name
+               (read-file-name (format "Master photo %d: " (1+ (length files)))
+                               (file-name-directory first) nil t))
+              files))
+      (nreverse files))))
+
 (defun facecomp--read-targets (&optional master)
   "Prompt for photos to compare against the master, one at a time.
 
@@ -180,8 +203,11 @@ For selecting many photos at once, mark them in Dired and call
       (push (read-file-name (format "Photo %d: " (1+ (length files))) dir nil t) files))
     (mapcar #'expand-file-name (nreverse files))))
 
-(defun facecomp--run (master targets &optional confidence)
-  "Run the facecomp executable comparing MASTER against TARGETS.
+(defun facecomp--run (masters targets &optional confidence)
+  "Run the facecomp executable comparing MASTERS against TARGETS.
+MASTERS is a list of one or more photos of the same person; several are
+averaged by the executable into one template.  A bare string is accepted
+too, so older callers keep working.
 CONFIDENCE, when non-nil, overrides `facecomp-detection-confidence' for
 this run only; the customize variable itself is left untouched.
 Returns the parsed JSON report."
@@ -190,8 +216,11 @@ Returns the parsed JSON report."
                 facecomp-executable))
   (facecomp--check-ranges (or confidence facecomp-detection-confidence))
   (with-temp-buffer
-    (let* ((conf (or confidence facecomp-detection-confidence))
-           (args (append (list "--master" master)
+    (let* ((masters (if (listp masters) masters (list masters)))
+           (conf (or confidence facecomp-detection-confidence))
+           ;; --master takes one or more values, so the list is spliced in and
+           ;; terminated by whichever flag comes next.
+           (args (append (list "--master") masters
                           (facecomp--model-args)
                           (when facecomp-backend
                             (list "--backend" (symbol-name facecomp-backend)))
@@ -251,7 +280,32 @@ noise from failing an otherwise good run."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (format "master: %s\n" (alist-get 'master report)))
+        ;; `masters' is a list in current builds; older ones report a single
+        ;; `master' string. Both are handled so an older executable still
+        ;; renders rather than showing an empty header.
+        (let* ((masters (append (alist-get 'masters report) nil))
+               (master (alist-get 'master report)))
+          (cond
+           ((cdr masters)
+            (insert (format "master: %d photos averaged into one template\n"
+                            (length masters)))
+            (dolist (m masters) (insert (format "  %s\n" m))))
+           (masters (insert (format "master: %s\n" (car masters))))
+           (master (insert (format "master: %s\n" master)))))
+        ;; The enrolment cross-check. Nothing else can catch a stray photo of
+        ;; the wrong person among the masters: it drags the template toward
+        ;; them and then mis-scores everything, silently. A disagreeing pair is
+        ;; the only visible symptom, so it is always shown when present.
+        (let ((agreement (alist-get 'enrolment_agreement report))
+              (threshold (alist-get 'threshold report)))
+          (when agreement
+            (insert (format "agreement: %.4f (lowest similarity between master photos)\n"
+                            agreement))
+            (when (and threshold (< agreement threshold))
+              (insert (propertize
+                       (format "  WARNING: below the %.3f cutoff — these may not all be \
+the same person\n" threshold)
+                       'face 'warning)))))
         ;; Older facecomp builds don't report this, so only show it when present.
         (let ((dims (alist-get 'embedding_dimensions report)))
           (when dims
@@ -279,17 +333,34 @@ noise from failing an otherwise good run."
         (special-mode)))
     (display-buffer buf)))
 
-(defun facecomp--choose-master (marked)
-  "Prompt for which file in MARKED is the master; return (MASTER TARGETS).
-MARKED's own ordering is Dired's buffer order, not the order the
-files were actually marked in - Dired doesn't track that at all - so
-this always asks explicitly rather than guessing from position."
+(defun facecomp--choose-masters (marked)
+  "Prompt for which files in MARKED are masters; return (MASTERS TARGETS).
+
+Accepts several, comma-separated, so a set of confirmed photos of one
+person can be averaged into a single template.  Naming just one keeps
+the previous behaviour exactly.
+
+MARKED's own ordering is Dired's buffer order, not the order the files
+were actually marked in - Dired doesn't track that at all - so this
+always asks explicitly rather than guessing from position.  Pressing
+RET with nothing typed takes the topmost marked file."
   (let* ((candidates (mapcar (lambda (f) (cons (file-name-nondirectory f) f)) marked))
-         (choice (completing-read
-                  (format "Master photo (of %d marked): " (length marked))
-                  candidates nil t nil nil (caar candidates)))
-         (master (alist-get choice candidates nil nil #'string=)))
-    (list master (remove master marked))))
+         (default (caar candidates))
+         (choices (completing-read-multiple
+                   (format "Master photo(s), comma-separated (of %d marked): "
+                           (length marked))
+                   candidates nil t nil nil default))
+         (masters (mapcar
+                   (lambda (c)
+                     (or (alist-get c candidates nil nil #'string=)
+                         (user-error "`%s' is not one of the marked files" c)))
+                   (or choices (list default))))
+         targets)
+    ;; Not `remove': every master has to come out, and a plain list walk
+    ;; avoids pulling in seq/cl just for a set difference.
+    (dolist (f marked)
+      (unless (member f masters) (push f targets)))
+    (list masters (nreverse targets))))
 
 (defun facecomp--check-ranges (conf)
   "Reject a threshold, detector CONF or `facecomp-max' the executable would refuse.
@@ -327,17 +398,22 @@ borderline comparison at a different setting."
     conf))
 
 ;;;###autoload
-(defun facecomp-compare (master targets &optional confidence)
-  "Compare MASTER against each of TARGETS and show a percentage match.
+(defun facecomp-compare (masters targets &optional confidence)
+  "Compare MASTERS against each of TARGETS and show a percentage match.
 Each result also gets a qualitative confidence label (Almost certain,
 Very likely, Likely, ...).
 
+MASTERS is one photo, or several of the *same person*.  Given several,
+the executable averages them into one template, which matches more
+reliably than any single photo - so if you have a few confirmed shots
+of someone, use them all.  A bare string is accepted as well as a list.
+
 When called from a Dired buffer with two or more files marked, prompts
-for which of the marked files is MASTER (defaulting to the topmost one
-in the buffer) and uses the rest as TARGETS. That is the way to select
-many photos at once. Otherwise prompts for a master photo, then for
-the photos to compare against it, picked one at a time starting in the
-master's own directory.
+for which of the marked files are MASTERS - several may be given,
+comma-separated, and RET alone takes the topmost - and uses the rest as
+TARGETS.  That is the way to select many photos at once.  Otherwise
+prompts for master photos one at a time, then for the photos to compare
+against them, starting in the first master's own directory.
 
 With a prefix argument, also prompts for a detector CONFIDENCE to use
 for this run only, leaving `facecomp-detection-confidence' alone. Use
@@ -347,14 +423,16 @@ having to change your configuration and change it back."
    (append
     (if (and (derived-mode-p 'dired-mode)
              (>= (length (dired-get-marked-files)) 2))
-        (facecomp--choose-master (dired-get-marked-files))
-      (let ((master (expand-file-name (read-file-name "Master photo: " nil nil t))))
-        (list master (facecomp--read-targets master))))
+        (facecomp--choose-masters (dired-get-marked-files))
+      (let ((masters (facecomp--read-masters)))
+        (list masters (facecomp--read-targets (car masters)))))
     ;; Read last, so the prefix-arg prompt doesn't precede choosing photos.
     (list (when current-prefix-arg (facecomp--read-confidence)))))
+  (when (null masters)
+    (user-error "Select at least one master photo"))
   (when (null targets)
     (user-error "Select at least one photo to compare against the master"))
-  (facecomp--render (facecomp--run master targets confidence)))
+  (facecomp--render (facecomp--run masters targets confidence)))
 
 (provide 'facecomp)
 
