@@ -41,17 +41,57 @@ struct Args {
     encoder_model: PathBuf,
 
     /// Cosine similarity at/above which two faces count as the same person.
-    #[arg(long, default_value_t = DEFAULT_THRESHOLD)]
+    #[arg(long, default_value_t = DEFAULT_THRESHOLD, value_parser = parse_threshold)]
     threshold: f64,
 
     /// Detector confidence at/above which a candidate counts as a face. Lower
     /// it to find faces in difficult photos; raise it if non-faces are picked up.
-    #[arg(long, env = "FACECOMP_DETECTION_CONFIDENCE", default_value_t = DEFAULT_DETECTION_CONFIDENCE)]
+    #[arg(long, env = "FACECOMP_DETECTION_CONFIDENCE",
+          default_value_t = DEFAULT_DETECTION_CONFIDENCE,
+          value_parser = parse_detection_confidence)]
     detection_confidence: f32,
 
     /// Emit machine-readable JSON instead of a text table.
     #[arg(long)]
     json: bool,
+}
+
+/// Rejects thresholds that make the match-percent scale meaningless.
+///
+/// Cosine similarity tops out at 1.0, so a threshold at or above it can never
+/// be met - and worse, it doesn't merely fail, it misreports. The scale is
+/// centred by dividing by `1 - (2*threshold - 1)`, which is zero at exactly
+/// 1.0 and negative beyond it: a threshold of 1.0 reported an identical face
+/// as "0.0% Almost no chance", and 1.5 reported a stranger as "100% Almost
+/// certain". Refusing the value up front is the only honest option.
+fn parse_threshold(s: &str) -> Result<f64, String> {
+    let value: f64 = s
+        .parse()
+        .map_err(|_| format!("`{s}` is not a number"))?;
+    if value > 0.0 && value < 1.0 {
+        Ok(value)
+    } else {
+        Err(format!(
+            "must be greater than 0 and less than 1, got {value} \
+             (cosine similarity never exceeds 1.0)"
+        ))
+    }
+}
+
+/// Rejects detector confidences outside the range YuNet scores can occupy.
+///
+/// The score is a probability, so anything at or below 0 accepts every
+/// candidate the network proposes - 0 turned a single portrait into 1543
+/// "faces" and reported a best match against the noise.
+fn parse_detection_confidence(s: &str) -> Result<f32, String> {
+    let value: f32 = s
+        .parse()
+        .map_err(|_| format!("`{s}` is not a number"))?;
+    if value > 0.0 && value <= 1.0 {
+        Ok(value)
+    } else {
+        Err(format!("must be greater than 0 and at most 1, got {value}"))
+    }
 }
 
 #[derive(Serialize)]
