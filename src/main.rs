@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use serde::Serialize;
+use unicode_width::UnicodeWidthStr;
 
 use facecomp::{
     confidence_label, embedding_dimensions, FaceComparer, DEFAULT_DETECTION_CONFIDENCE,
@@ -54,6 +55,25 @@ struct Args {
     /// Emit machine-readable JSON instead of a text table.
     #[arg(long)]
     json: bool,
+}
+
+/// Width of the `photo` column in the text table.
+const PHOTO_COLUMN: usize = 30;
+
+/// Pads `s` to `width` terminal columns, not to `width` characters.
+///
+/// `{:<30}` counts characters, which is the same thing only for narrow
+/// scripts. CJK and other East Asian Wide characters occupy two columns each,
+/// so a filename like `日本語.jpg` was padded as though it were half as wide
+/// as it prints, and every column after it drifted left. Over-long names are
+/// left to overflow, matching the previous behaviour.
+fn pad_to_width(s: &str, width: usize) -> String {
+    let printed = UnicodeWidthStr::width(s);
+    if printed >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - printed))
+    }
 }
 
 /// Rejects thresholds that make the match-percent scale meaningless.
@@ -221,13 +241,16 @@ fn main() -> ExitCode {
         println!("master: {}", args.master.display());
         println!("embedding: {embedding_dims} dimensions per face\n");
         println!(
-            "{:<30} {:>6} {:>10} {:>8}  confidence",
-            "photo", "faces", "similarity", "match %"
+            "{} {:>6} {:>10} {:>8}  confidence",
+            pad_to_width("photo", PHOTO_COLUMN),
+            "faces",
+            "similarity",
+            "match %"
         );
         for r in &results {
             println!(
-                "{:<30} {:>6} {:>10.4} {:>7.1}%  {}",
-                r.photo.display(),
+                "{} {:>6} {:>10.4} {:>7.1}%  {}",
+                pad_to_width(&r.photo.display().to_string(), PHOTO_COLUMN),
                 r.faces_detected,
                 r.similarity,
                 r.match_percent,
