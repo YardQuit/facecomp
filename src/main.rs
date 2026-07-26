@@ -42,7 +42,16 @@ struct Args {
     slaves: Vec<String>,
 
     /// Path to OpenCV Zoo's face_detection_yunet_2023mar.onnx.
-    #[arg(long, value_name = "FILE", env = "FACECOMP_DETECTOR_MODEL")]
+    // The env value is hidden because it holds a filesystem path, which gives
+    // clap nowhere to wrap: this line ran to 151 columns under the AppImage,
+    // which points the variable at its own mount. That mount is a fresh
+    // temporary directory on every run, so printing it helped nobody.
+    #[arg(
+        long,
+        value_name = "FILE",
+        env = "FACECOMP_DETECTOR_MODEL",
+        hide_env_values = true
+    )]
     detector_model: PathBuf,
 
     /// Which embedding model to use: "sface" (128 numbers per face) or
@@ -68,6 +77,7 @@ struct Args {
     /// Detector confidence at/above which a candidate counts as a face - see
     /// CHOOSING --detection-confidence.
     #[arg(long, value_name = "NUM", env = "FACECOMP_DETECTION_CONFIDENCE",
+          hide_env_values = true,
           default_value_t = DEFAULT_DETECTION_CONFIDENCE,
           value_parser = parse_detection_confidence)]
     detection_confidence: f32,
@@ -472,6 +482,29 @@ mod tests {
             over.is_empty(),
             "uncapped help exceeds {HELP_WIDTH}: {over:#?}"
         );
+    }
+
+    /// An env-backed argument holding a path busts the column budget on its
+    /// own: clap prints `[env: NAME=value]` and a path gives it nowhere to
+    /// wrap. `help_fits_eighty_columns` can't catch it, because whether the
+    /// variable is set - and to what - depends on how facecomp was installed.
+    /// Under the AppImage this ran to 151 columns.
+    #[test]
+    fn help_never_prints_env_values() {
+        let cmd = Args::command();
+        let help = cmd
+            .clone()
+            .term_width(HELP_WIDTH)
+            .render_long_help()
+            .to_string();
+        for arg in cmd.get_arguments() {
+            let Some(var) = arg.get_env() else { continue };
+            let var = var.to_string_lossy();
+            assert!(
+                !help.contains(&format!("[env: {var}=")),
+                "--help renders {var}'s value, which is unwrappable if it is a path"
+            );
+        }
     }
 
     /// The usage line is written out by hand because clap never wraps it, so
