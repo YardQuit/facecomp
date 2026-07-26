@@ -296,9 +296,10 @@ Load `emacs/facecomp.el` and configure it:
 
 Then:
 
-- `M-x facecomp-compare` prompts for a master photo, then either a
-  glob pattern (e.g. `*.png`) or photos to compare against it picked
-  one at a time.
+- `M-x facecomp-compare` prompts for a master photo, then for the
+  photos to compare against it, picked one at a time. Picking starts
+  in the master photo's own directory rather than wherever you invoked
+  `M-x` from. To select many photos at once, use the Dired route below.
 - Or mark two or more files in Dired and run `M-x facecomp-compare` —
   you'll be prompted for which of the marked files is the master
   (defaulting to the topmost one in the Dired listing), and the rest
