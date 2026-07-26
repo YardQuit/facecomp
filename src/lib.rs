@@ -11,9 +11,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use opencv::core::{
-    Mat, MatTraitConst, Point2f, Scalar, Size, Vector, CV_32F, NORM_L2,
-};
+use opencv::core::{Mat, MatTraitConst, Point2f, Scalar, Size, Vector, CV_32F, NORM_L2};
 use opencv::objdetect::{
     FaceDetectorYN, FaceDetectorYNTrait, FaceRecognizerSF, FaceRecognizerSFTrait,
     FaceRecognizerSFTraitConst, FaceRecognizerSF_FR_COSINE,
@@ -90,10 +88,25 @@ impl fmt::Display for Backend {
 ///
 /// Do not reorder these rows, and do not permute the source landmarks read out
 /// of the detection row. Getting it wrong does not error and does not even look
-/// broken: it silently inverts results. Measured on a same-person pair against
-/// a different-person pair, the correct order separates them by +0.7315 while
-/// a swapped one scores the *different* pair higher, at -0.0656. `tests/
-/// arcface_alignment.rs` pins this.
+/// broken - and how badly it breaks depends on *which* way it is wrong, which
+/// is what makes eyeballing a similarity score an unreliable check. Measured
+/// with the shipped int8 weights over a real same-person pair against a
+/// different person:
+///
+/// | landmark order          |  same | different | separation |
+/// |-------------------------|-------|-----------|------------|
+/// | native (shipped)        | 0.739 |     0.031 |     +0.708 |
+/// | mouth corners swapped   | 0.706 |    -0.069 |     +0.775 |
+/// | eyes swapped            | 0.471 |    -0.092 |     +0.563 |
+/// | mirrored (eyes + mouth) | 0.460 |     0.573 |     -0.113 |
+///
+/// The mirrored row is the dangerous one, and it is the mistake anyone would
+/// actually make: it is what assuming the opposite handedness convention gives
+/// you. It rates a *different* person as the better match, with no hint that
+/// anything is wrong. Note also that swapping only the mouth corners scored
+/// *better* than shipping order on this pair - a partial permutation can look
+/// like an improvement - so the guard is `tests/arcface_alignment.rs`, which
+/// checks the alignment residual rather than any similarity number.
 pub const ARCFACE_DST: [[f32; 2]; 5] = [
     [38.2946, 51.6963],
     [73.5318, 51.5014],
@@ -369,9 +382,7 @@ impl FaceComparer {
             // ArcFace embeddings leave `encode_row` L2-normalised, so their dot
             // product *is* the cosine of the angle between them - the same
             // quantity SFace's FR_COSINE returns, on the same 0..1 scale.
-            Recognizer::ArcFace(_) => a
-                .dot(b)
-                .map_err(|e| FacecompError::Model(e.to_string()))?,
+            Recognizer::ArcFace(_) => a.dot(b).map_err(|e| FacecompError::Model(e.to_string()))?,
         };
         Ok(Comparison {
             similarity,
@@ -443,9 +454,8 @@ impl FaceComparer {
 }
 
 fn path_to_str(path: &Path) -> Result<&str, FacecompError> {
-    path.to_str().ok_or_else(|| {
-        FacecompError::Model(format!("{}: path is not valid UTF-8", path.display()))
-    })
+    path.to_str()
+        .ok_or_else(|| FacecompError::Model(format!("{}: path is not valid UTF-8", path.display())))
 }
 
 fn cv_image_err(path: &Path, e: CvError) -> FacecompError {

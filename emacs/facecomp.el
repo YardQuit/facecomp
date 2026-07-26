@@ -84,10 +84,45 @@ flag is simply omitted and the executable's own default is used."
   :type '(choice (const :tag "Let facecomp decide" nil) file)
   :group 'facecomp)
 
-(defcustom facecomp-threshold 0.363
+(defcustom facecomp-backend nil
+  "Which recognition model `facecomp' should embed faces with.
+`sface' produces 128 numbers per face, `arcface' 512.  Leave nil to use
+the executable's own default (SFace).
+
+Switching this also means pointing `facecomp-arcface-model' at the
+matching weights, and setting `facecomp-threshold', since the cutoff is
+not comparable between the two."
+  :type '(choice (const :tag "Let facecomp decide" nil)
+                 (const :tag "SFace (128 dimensions)" sface)
+                 (const :tag "ArcFace (512 dimensions)" arcface))
+  :group 'facecomp)
+
+(defcustom facecomp-arcface-model nil
+  "Path to ONNX Model Zoo's `arcfaceresnet100-11-int8.onnx'.
+Used in place of `facecomp-encoder-model' when `facecomp-backend' is
+`arcface'.  Leave nil if `facecomp-executable' already knows where to
+find it - the AppImage build does, via its bundled
+`FACECOMP_ARCFACE_MODEL' default."
+  :type '(choice (const :tag "Let facecomp decide" nil) file)
+  :group 'facecomp)
+
+(defcustom facecomp-threshold nil
   "Cosine similarity at/above which two faces count as the same person.
-Passed through to the `facecomp' executable's `--threshold' flag."
-  :type 'float
+Passed through to the `facecomp' executable's `--threshold' flag.
+
+Leave nil to use the executable's own default, so the two can't drift
+apart when that default changes.  Note that the cutoff is a property of
+the recognition model: SFace's published 0.363 says nothing about
+ArcFace, which has no trustworthy default and so must be given a value
+here explicitly.  Pinning a number that belongs to the other backend
+does not fail - it silently mis-scores every comparison."
+  :type '(choice (const :tag "Let facecomp decide" nil) float)
+  :group 'facecomp)
+
+(defcustom facecomp-max nil
+  "Report only the N closest-matching photos rather than all of them.
+Leave nil to report every photo compared."
+  :type '(choice (const :tag "Report all" nil) integer)
   :group 'facecomp)
 
 (defcustom facecomp-detection-confidence nil
@@ -104,18 +139,24 @@ Each is included only when its customize variable is set to an
 existing file; otherwise it's left out entirely so the executable
 falls back to its own default (e.g. the AppImage build's bundled
 models). A variable that IS set but points nowhere is treated as a
-user mistake worth catching early, rather than silently ignored."
-  (let (args)
+user mistake worth catching early, rather than silently ignored.
+
+Which variable supplies `--encoder-model' follows `facecomp-backend',
+so the weights can never disagree with the backend they're loaded for."
+  (let ((encoder (if (eq facecomp-backend 'arcface)
+                     (cons 'facecomp-arcface-model facecomp-arcface-model)
+                   (cons 'facecomp-encoder-model facecomp-encoder-model)))
+        args)
     (when facecomp-detector-model
       (unless (file-exists-p facecomp-detector-model)
         (user-error "`facecomp-detector-model' is set to `%s', which doesn't exist"
                     facecomp-detector-model))
       (setq args (nconc args (list "--detector-model" facecomp-detector-model))))
-    (when facecomp-encoder-model
-      (unless (file-exists-p facecomp-encoder-model)
-        (user-error "`facecomp-encoder-model' is set to `%s', which doesn't exist"
-                    facecomp-encoder-model))
-      (setq args (nconc args (list "--encoder-model" facecomp-encoder-model))))
+    (when (cdr encoder)
+      (unless (file-exists-p (cdr encoder))
+        (user-error "`%s' is set to `%s', which doesn't exist"
+                    (car encoder) (cdr encoder)))
+      (setq args (nconc args (list "--encoder-model" (cdr encoder)))))
     args))
 
 (defun facecomp--read-targets (&optional master)
@@ -148,9 +189,14 @@ Returns the parsed JSON report."
     (let* ((conf (or confidence facecomp-detection-confidence))
            (args (append (list "--master" master)
                           (facecomp--model-args)
-                          (list "--threshold" (number-to-string facecomp-threshold))
+                          (when facecomp-backend
+                            (list "--backend" (symbol-name facecomp-backend)))
+                          (when facecomp-threshold
+                            (list "--threshold" (number-to-string facecomp-threshold)))
                           (when conf
                             (list "--detection-confidence" (number-to-string conf)))
+                          (when facecomp-max
+                            (list "--max" (number-to-string facecomp-max)))
                           (list "--json" "--slave")
                           targets))
            ;; Keep stderr out of the buffer we parse: a bare `t' destination
@@ -242,21 +288,29 @@ this always asks explicitly rather than guessing from position."
     (list master (remove master marked))))
 
 (defun facecomp--check-ranges (conf)
-  "Reject a threshold or detector CONF the executable would refuse.
+  "Reject a threshold, detector CONF or `facecomp-max' the executable would refuse.
 
 Catching these here turns what would otherwise surface as a raw
 subprocess error dump into a plain Emacs message naming the offending
 variable.  It matters because the bad values aren't obviously bad: a
 `facecomp-threshold' of 1 is a plausible thing to type, and it used to
-report an identical face as \"0.0%% Almost no chance\"."
-  (unless (and (numberp facecomp-threshold)
-               (> facecomp-threshold 0.0) (< facecomp-threshold 1.0))
-    (user-error "`facecomp-threshold' must be greater than 0 and less than 1, not %s"
-                facecomp-threshold))
+report an identical face as \"0.0%% Almost no chance\".
+
+Each check is skipped when its variable is nil, which means \"don't pass
+the flag at all\" rather than \"pass nothing\"."
+  (when facecomp-threshold
+    (unless (and (numberp facecomp-threshold)
+                 (> facecomp-threshold 0.0) (< facecomp-threshold 1.0))
+      (user-error "`facecomp-threshold' must be greater than 0 and less than 1, not %s"
+                  facecomp-threshold)))
   (when conf
     (unless (and (numberp conf) (> conf 0.0) (<= conf 1.0))
       (user-error "Detector confidence must be greater than 0 and at most 1, not %s"
-                  conf))))
+                  conf)))
+  (when facecomp-max
+    (unless (and (integerp facecomp-max) (> facecomp-max 0))
+      (user-error "`facecomp-max' must be a positive whole number, not %s"
+                  facecomp-max))))
 
 (defun facecomp--read-confidence ()
   "Prompt for a one-off detection confidence, and sanity-check it.

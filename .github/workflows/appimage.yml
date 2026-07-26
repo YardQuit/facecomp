@@ -40,7 +40,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: opencv-install
-          key: opencv-4.10.0-objdetect-dnn-v1
+          # The module list is part of this key on purpose. Adding a module
+          # without changing it restores an OpenCV built without that module
+          # and the Rust build then fails on missing headers, which reads as a
+          # code error rather than a stale cache.
+          key: opencv-4.10.0-objdetect-dnn-calib3d-v2
 
       - name: Build OpenCV from source
         if: steps.cache-opencv.outputs.cache-hit != 'true'
@@ -49,7 +53,7 @@ jobs:
           cmake -S /tmp/opencv-src -B /tmp/opencv-build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/opencv-install" \
-            -DBUILD_LIST=core,imgproc,imgcodecs,objdetect,dnn \
+            -DBUILD_LIST=core,imgproc,imgcodecs,objdetect,dnn,calib3d \
             -DBUILD_SHARED_LIBS=ON \
             -DOPENCV_GENERATE_PKGCONFIG=ON \
             -DBUILD_opencv_python2=OFF -DBUILD_opencv_python3=OFF \
@@ -66,14 +70,25 @@ jobs:
           echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/opencv-install/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/opencv-install/lib" >> "$GITHUB_ENV"
 
-      - name: Cache OpenCV Zoo model files
+      # Runs before anything is packaged, so a broken landmark ordering stops
+      # the build rather than shipping. --all-targets so the examples are
+      # compiled too - ordering_check.rs is the tool that measured the numbers
+      # tests/arcface_alignment.rs encodes, and it should not be allowed to rot.
+      - name: Run tests
+        run: cargo test --all-targets
+
+      - name: Cache model files
         id: cache-models
         uses: actions/cache@v4
         with:
           path: models
-          key: opencv-zoo-models-v1
+          key: facecomp-models-yunet-sface-arcface-v2
 
-      - name: Download OpenCV Zoo model files
+      # YuNet and SFace come from OpenCV Zoo, ArcFace from the ONNX Model Zoo;
+      # all three are git-lfs objects, hence the media. host. The int8 ArcFace
+      # build is 66MB against fp32's 261MB, for about 5% less separation - not
+      # worth quadrupling the AppImage for.
+      - name: Download model files
         if: steps.cache-models.outputs.cache-hit != 'true'
         run: |
           mkdir -p models
@@ -81,6 +96,8 @@ jobs:
             https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
           curl -sSL -o models/face_recognition_sface_2021dec.onnx \
             https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+          curl -sSL -o models/arcfaceresnet100-11-int8.onnx \
+            https://media.githubusercontent.com/media/onnx/models/main/validated/vision/body_analysis/arcface/model/arcfaceresnet100-11-int8.onnx
 
       - name: Cache packaging tools (linuxdeploy/appimagetool)
         uses: actions/cache@v4
@@ -92,7 +109,8 @@ jobs:
         run: |
           ./packaging/build-appimage.sh \
             models/face_detection_yunet_2023mar.onnx \
-            models/face_recognition_sface_2021dec.onnx
+            models/face_recognition_sface_2021dec.onnx \
+            models/arcfaceresnet100-11-int8.onnx
 
       - name: Smoke-test the AppImage
         run: ./facecomp-x86_64.AppImage --appimage-extract-and-run --help

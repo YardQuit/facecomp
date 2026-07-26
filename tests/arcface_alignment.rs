@@ -138,8 +138,14 @@ fn destination_points_are_the_canonical_ones() {
     // reordering is a test failure with an obvious cause rather than a number
     // that no longer matches.
     let [right_eye, left_eye, nose, right_mouth, left_mouth] = ARCFACE_DST;
-    assert!(right_eye[0] < left_eye[0], "row 0 is the right eye, row 1 the left");
-    assert!(right_mouth[0] < left_mouth[0], "row 3 is the right mouth corner, row 4 the left");
+    assert!(
+        right_eye[0] < left_eye[0],
+        "row 0 is the right eye, row 1 the left"
+    );
+    assert!(
+        right_mouth[0] < left_mouth[0],
+        "row 3 is the right mouth corner, row 4 the left"
+    );
     assert!(right_eye[1] < nose[1], "eyes sit above the nose");
     assert!(nose[1] < right_mouth[1], "the nose sits above the mouth");
 }
