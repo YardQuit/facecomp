@@ -109,6 +109,35 @@ Until a value is derived on a pair set large enough to be stable
 `--backend arcface` as experimental and the number you pass to
 `--threshold` as your own calibration.
 
+`tools/derive_threshold.py` is what derives it. It runs the same
+pipeline `facecomp` does — YuNet detect, 5-point align, embed, cosine
+— over a labelled pair set, then picks the threshold by 10-fold
+cross-validation, choosing it on nine folds and scoring it on the
+tenth. That reports how stable the value is rather than just what it
+is, so one lucky split can't pass for a result:
+
+```sh
+# LFW, standard protocol (pairs.txt + lfw/<Name>/<Name>_0001.jpg)
+python3 tools/derive_threshold.py \
+  --images-dir /path/to/lfw --pairs /path/to/pairs.txt \
+  --detector face_detection_yunet_2023mar.onnx \
+  --recognizer arcfaceresnet100-11-int8.onnx \
+  --backend arcface --det-score 0.5
+
+# any second dataset, as <imgA>\t<imgB>\t<1|0>
+python3 tools/derive_threshold.py --pairs-format tsv ...
+```
+
+Needs `opencv-python` (4.10 or newer) and `numpy`. Two details that
+are easy to get wrong and are baked in: it scores by *balanced*
+accuracy, because plain accuracy rates an "always different"
+classifier at 87% on a typical imbalanced pair set; and it assigns
+folds stratified, because with only a few dozen positive pairs
+sequential folds can contain no same-person pair at all, making that
+fold's score meaningless. It prints a warning when the per-fold spread
+exceeds 0.05 — heed it. That is exactly what disqualified the two
+small sets above.
+
 ## Portable AppImage build
 
 Since the compiled binary alone isn't enough to run on another
