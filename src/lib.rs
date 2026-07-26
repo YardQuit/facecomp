@@ -247,6 +247,12 @@ pub struct Comparison {
 /// We linearly scale similarity so that 1.0 (identical) -> 100% and the
 /// threshold's mirror image below it -> 0%, which puts the same/different
 /// cutoff itself at exactly 50%.
+///
+/// `threshold` must lie in `(0.0, 1.0)`. At exactly 1.0 the divisor below is
+/// zero and above it the scale inverts, so out-of-range values don't fail
+/// loudly - they quietly return 0% for an identical face, or 100% for a
+/// stranger. The CLI rejects them before they reach here; callers using this
+/// crate directly need to do the same.
 pub fn similarity_to_percent(similarity: f64, threshold: f64) -> f64 {
     let floor = 2.0 * threshold - 1.0;
     let percent = 100.0 * (similarity - floor) / (1.0 - floor);

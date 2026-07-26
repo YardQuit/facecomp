@@ -160,12 +160,17 @@ Other flags:
 
 - `--threshold <f64>` — the cosine similarity at/above which two faces
   count as the same person (default `0.363`, the OpenCV Zoo-published
-  recommendation for the SFace model).
+  recommendation for the SFace model). Must be greater than 0 and less
+  than 1; cosine similarity never exceeds 1.0, and a threshold at or
+  above it would collapse the match-percent scale rather than simply
+  matching nothing, so such values are rejected outright.
 - `--detection-confidence <f32>` — how confident YuNet must be before a
   candidate counts as a face (default `0.7`; also settable via
   `FACECOMP_DETECTION_CONFIDENCE`). Lower it if `facecomp` reports "no
   face detected" on photos that clearly contain one; raise it if it
-  picks up things that aren't faces. See
+  picks up things that aren't faces. Must be greater than 0 and at most
+  1 — it's a probability, and 0 accepts every candidate the network
+  proposes (a single portrait yielded 1543 "faces"). See
   [Detection confidence](#detection-confidence).
 - `--json` — emit a machine-readable JSON report instead of the table
   above (this is what `facecomp.el` uses).

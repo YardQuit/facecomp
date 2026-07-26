@@ -143,6 +143,7 @@ Returns the parsed JSON report."
   (unless (executable-find facecomp-executable)
     (user-error "Could not find `%s' on PATH; set `facecomp-executable'"
                 facecomp-executable))
+  (facecomp--check-ranges (or confidence facecomp-detection-confidence))
   (with-temp-buffer
     (let* ((conf (or confidence facecomp-detection-confidence))
            (args (append (list "--master" master)
@@ -239,6 +240,23 @@ this always asks explicitly rather than guessing from position."
                   candidates nil t nil nil (caar candidates)))
          (master (alist-get choice candidates nil nil #'string=)))
     (list master (remove master marked))))
+
+(defun facecomp--check-ranges (conf)
+  "Reject a threshold or detector CONF the executable would refuse.
+
+Catching these here turns what would otherwise surface as a raw
+subprocess error dump into a plain Emacs message naming the offending
+variable.  It matters because the bad values aren't obviously bad: a
+`facecomp-threshold' of 1 is a plausible thing to type, and it used to
+report an identical face as \"0.0%% Almost no chance\"."
+  (unless (and (numberp facecomp-threshold)
+               (> facecomp-threshold 0.0) (< facecomp-threshold 1.0))
+    (user-error "`facecomp-threshold' must be greater than 0 and less than 1, not %s"
+                facecomp-threshold))
+  (when conf
+    (unless (and (numberp conf) (> conf 0.0) (<= conf 1.0))
+      (user-error "Detector confidence must be greater than 0 and at most 1, not %s"
+                  conf))))
 
 (defun facecomp--read-confidence ()
   "Prompt for a one-off detection confidence, and sanity-check it.
