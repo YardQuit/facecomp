@@ -9,13 +9,13 @@
 use facecomp::{Backend, ARCFACE_DEFAULT_THRESHOLD, DEFAULT_THRESHOLD};
 
 #[test]
-fn sface_uses_the_published_cutoff() {
-    // OpenCV Zoo's published recommendation for face_recognition_sface_2021dec.
-    // Deriving it over LFW through this crate's pipeline put the optimum at
-    // 0.3156, worth 0.13 percentage points - not enough to justify moving a
-    // shipped default, so the published value stands.
-    assert_eq!(DEFAULT_THRESHOLD, 0.363);
-    assert_eq!(Backend::SFace.default_threshold(), Some(0.363));
+fn sface_uses_the_cutoff_derived_over_lfw() {
+    // 0.3156 +/- 0.0109 across LFW's ten official folds, at 0.9887 +/- 0.0036
+    // balanced accuracy. Deliberately not OpenCV Zoo's published 0.363: that
+    // describes OpenCV's own pipeline, and measured through this one it misses
+    // 72 of 3000 genuine pairs where 0.316 misses 55.
+    assert_eq!(DEFAULT_THRESHOLD, 0.316);
+    assert_eq!(Backend::SFace.default_threshold(), Some(0.316));
 }
 
 #[test]

@@ -20,17 +20,27 @@ use opencv::{calib3d, core as cv_core, dnn, imgcodecs, imgproc, Error as CvError
 
 use dnn::NetTrait;
 
-/// Cosine similarity at/above which SFace's model considers two faces the
-/// same person.
+/// Cosine similarity at/above which SFace considers two faces the same person.
 ///
-/// This is the threshold OpenCV Zoo publishes for the
-/// `face_recognition_sface_2021dec` model, not something we derived
-/// ourselves. Deriving it over LFW's 6000 pairs through this crate's own
-/// pipeline puts the optimum slightly lower, at 0.3156, which would miss 55
-/// genuine pairs against 0.363's 72; the published value is kept because the
-/// difference is 0.13 percentage points of balanced accuracy and changing a
-/// shipped default is not worth that.
-pub const DEFAULT_THRESHOLD: f64 = 0.363;
+/// Derived here rather than taken from OpenCV Zoo, over the same LFW 6000-pair
+/// protocol as [`ARCFACE_DEFAULT_THRESHOLD`]: 0.3156 ± 0.0109 across the ten
+/// official folds, at 0.9887 ± 0.0036 balanced accuracy. Nothing scores a
+/// perfect 1.0000, so the value is genuinely constrained by the data.
+///
+/// OpenCV Zoo publishes 0.363 for `face_recognition_sface_2021dec`, and that is
+/// a perfectly reasonable number - it sits inside the band scoring within 0.5
+/// percentage points of optimal. But it describes OpenCV's own pipeline, and
+/// this crate's differs slightly.
+///
+/// The choice between them is a trade, not a free win, and balanced accuracy
+/// hides which way: over LFW's 3000 same and 3000 different pairs, 0.316 misses
+/// 55 genuine pairs and wrongly accepts 11, while 0.363 misses 72 and wrongly
+/// accepts only 2. The derived value is taken because it scores better overall
+/// (0.9890 against 0.9877) and because a missed match is recoverable - the
+/// similarity is still printed - whereas a false accept reads as a confident
+/// identification. Anyone who would rather err the other way should pass
+/// `--threshold 0.363`.
+pub const DEFAULT_THRESHOLD: f64 = 0.316;
 
 /// Cosine similarity at/above which ArcFace considers two faces the same
 /// person.
@@ -79,8 +89,8 @@ impl Backend {
     /// - it produces confident nonsense (see [`similarity_to_percent`]) - so
     /// "no default" remains the honest encoding of "not yet derived".
     ///
-    /// SFace's 0.363 is published by OpenCV Zoo. ArcFace's is derived here over
-    /// LFW's 6000 pairs; see [`ARCFACE_DEFAULT_THRESHOLD`].
+    /// Both values are derived over LFW's 6000 pairs through this crate's own
+    /// pipeline - see [`DEFAULT_THRESHOLD`] and [`ARCFACE_DEFAULT_THRESHOLD`].
     pub fn default_threshold(self) -> Option<f64> {
         match self {
             Backend::SFace => Some(DEFAULT_THRESHOLD),

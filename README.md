@@ -86,7 +86,7 @@ download or the AppImage.
 |----------------|-------------------|----------------|
 | Embedding size | 128               | 512            |
 | Model size     | ~37 MB            | ~66 MB (int8)  |
-| Default cutoff | 0.363 (published) | 0.239 (derived)  |
+| Default cutoff | 0.316 (derived)   | 0.239 (derived)  |
 | LFW accuracy   | 0.9887            | **0.9932**       |
 
 Both backends detect with YuNet and compare by cosine similarity; they
@@ -98,8 +98,8 @@ the classes further — mean similarity 0.6768 vs 0.0045 for ArcFace,
 non-matches lower.
 
 **The two cutoffs are not interchangeable.** A threshold is a property
-of the model that produced the embeddings. Passing SFace's 0.363 to
-ArcFace would miss 56 of 3000 genuine LFW pairs where 0.239 misses 37
+of the model that produced the embeddings. Passing SFace's 0.316 to
+ArcFace would miss 49 of 3000 genuine LFW pairs where 0.239 misses 37
 — it wouldn't fail loudly, it would just quietly reject matches, the
 same way `--threshold 1.0` once reported an identical face as "0.0%
 Almost no chance".
@@ -131,11 +131,25 @@ so nothing pulls the cut downward and it drifts up into the gap. At
 0.40 this backend missed 73 of 3000 genuine pairs; at 0.239 it misses
 37.
 
-SFace's published 0.363 was checked the same way. Deriving it through
-this pipeline puts the optimum slightly lower, at 0.3156 (55 missed
-pairs against 0.363's 72), but the difference is 0.13 percentage
-points of balanced accuracy, so the published value is kept rather
-than changing a shipped default for that.
+SFace's default was derived the same way, at **0.3156 ± 0.0109** and
+0.9887 ± 0.0036 balanced accuracy, and ships rounded to `0.316`. OpenCV
+Zoo publishes `0.363` for this model and that is a perfectly reasonable
+number — it sits inside the band scoring within 0.5 points of optimal —
+but it describes OpenCV's own pipeline, and this one differs slightly.
+
+**That choice is a trade, and balanced accuracy hides which way it
+goes.** Over LFW's 3000 same and 3000 different pairs:
+
+| threshold | balanced | missed genuine | false accepts |
+|---|---|---|---|
+| **0.316 (default)** | 0.9890 | **55** | 11 |
+| 0.363 (OpenCV's) | 0.9877 | 72 | **2** |
+
+0.316 wins overall and recovers 17 genuine matches, but wrongly accepts
+9 more impostors. It's the default because a missed match is
+recoverable — the similarity is still printed, so a borderline result is
+visible — whereas a false accept reads as a confident identification.
+**If you would rather err the other way, pass `--threshold 0.363`.**
 
 `tools/derive_threshold.py` is what derives it. It runs the same
 pipeline `facecomp` does — YuNet detect, 5-point align, embed, cosine
@@ -341,8 +355,8 @@ Other flags:
   numbers (default `sface`). `--encoder-model` must be the matching
   weights. See [Choosing a backend](#choosing-a-backend).
 - `--threshold <f64>` — the cosine similarity at/above which two faces
-  count as the same person (default `0.363` for `sface`, the OpenCV
-  Zoo-published recommendation; `0.239` for `arcface`, derived over
+  count as the same person (default `0.316` for `sface` and `0.239` for
+  `arcface`, both derived over
   LFW — see [Choosing a backend](#choosing-a-backend)). Must be greater
   than 0 and less than 1;
   cosine similarity never exceeds 1.0, and a threshold at or above it
@@ -374,10 +388,10 @@ detected in it, or a glob matched nothing).
 ### Interpreting the percentage
 
 The cosine similarity itself (1.0 = identical, lower = less alike, and
-in principle as low as -1.0) is the only number OpenCV Zoo actually
-calibrates — its documented same/different cutoff for the SFace model
-is 0.363. The "match %" is a heuristic linear rescaling of that
-similarity, chosen so the 0.363 cutoff lands at exactly 50%:
+in principle as low as -1.0) is the measured quantity; everything else
+is presentation. The "match %" is a heuristic linear rescaling of it,
+chosen so that whichever `--threshold` is in force lands at exactly
+50%:
 
 ```
 match% = clamp(100 * (similarity - (2*threshold - 1)) / (1 - (2*threshold - 1)), 0, 100)
@@ -522,7 +536,7 @@ that's all:
 
 Leave `facecomp-threshold` nil, which is the recommended setting. The
 executable then applies the cutoff belonging to whichever backend is
-selected — 0.363 for SFace, 0.239 for ArcFace — so the two can't get
+selected — 0.316 for SFace, 0.239 for ArcFace — so the two can't get
 crossed. Pinning ArcFace's backend while leaving SFace's threshold
 pinned wouldn't error; it would quietly reject genuine matches.
 

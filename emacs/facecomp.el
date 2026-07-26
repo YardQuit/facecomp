@@ -91,7 +91,7 @@ the executable's own default (SFace).
 
 Switching this also means pointing `facecomp-arcface-model' at the
 matching weights.  Leave `facecomp-threshold' nil and the executable
-applies whichever cutoff belongs to the backend in use - 0.363 for
+applies whichever cutoff belongs to the backend in use - 0.316 for
 SFace, 0.239 for ArcFace.  They are not interchangeable."
   :type '(choice (const :tag "Let facecomp decide" nil)
                  (const :tag "SFace (128 dimensions)" sface)
@@ -115,11 +115,11 @@ Leave nil to use the executable's own default, so the two can't drift
 apart when that default changes.  That is the recommended setting: the
 cutoff is a property of the recognition model, and leaving this nil
 means the right one is picked automatically for whichever
-`facecomp-backend' is in use - 0.363 for SFace, 0.239 for ArcFace.
+`facecomp-backend' is in use - 0.316 for SFace, 0.239 for ArcFace.
 
 Pinning a number here that belongs to the other backend does not fail,
-it silently mis-scores every comparison.  SFace's 0.363 applied to
-ArcFace misses 56 of 3000 genuine LFW pairs where 0.239 misses 37."
+it silently mis-scores every comparison.  SFace's 0.316 applied to
+ArcFace misses 49 of 3000 genuine LFW pairs where 0.239 misses 37."
   :type '(choice (const :tag "Let facecomp decide" nil) float)
   :group 'facecomp)
 
