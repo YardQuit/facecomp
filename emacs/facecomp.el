@@ -90,8 +90,9 @@ flag is simply omitted and the executable's own default is used."
 the executable's own default (SFace).
 
 Switching this also means pointing `facecomp-arcface-model' at the
-matching weights, and setting `facecomp-threshold', since the cutoff is
-not comparable between the two."
+matching weights.  Leave `facecomp-threshold' nil and the executable
+applies whichever cutoff belongs to the backend in use - 0.316 for
+SFace, 0.239 for ArcFace.  They are not interchangeable."
   :type '(choice (const :tag "Let facecomp decide" nil)
                  (const :tag "SFace (128 dimensions)" sface)
                  (const :tag "ArcFace (512 dimensions)" arcface))
@@ -111,11 +112,14 @@ find it - the AppImage build does, via its bundled
 Passed through to the `facecomp' executable's `--threshold' flag.
 
 Leave nil to use the executable's own default, so the two can't drift
-apart when that default changes.  Note that the cutoff is a property of
-the recognition model: SFace's published 0.363 says nothing about
-ArcFace, which has no trustworthy default and so must be given a value
-here explicitly.  Pinning a number that belongs to the other backend
-does not fail - it silently mis-scores every comparison."
+apart when that default changes.  That is the recommended setting: the
+cutoff is a property of the recognition model, and leaving this nil
+means the right one is picked automatically for whichever
+`facecomp-backend' is in use - 0.316 for SFace, 0.239 for ArcFace.
+
+Pinning a number here that belongs to the other backend does not fail,
+it silently mis-scores every comparison.  SFace's 0.316 applied to
+ArcFace misses 49 of 3000 genuine LFW pairs where 0.239 misses 37."
   :type '(choice (const :tag "Let facecomp decide" nil) float)
   :group 'facecomp)
 

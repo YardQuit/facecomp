@@ -20,13 +20,49 @@ use opencv::{calib3d, core as cv_core, dnn, imgcodecs, imgproc, Error as CvError
 
 use dnn::NetTrait;
 
-/// Cosine similarity at/above which SFace's model considers two faces the
-/// same person.
+/// Cosine similarity at/above which SFace considers two faces the same person.
 ///
-/// This is the threshold OpenCV Zoo publishes for the
-/// `face_recognition_sface_2021dec` model, not something we derived
-/// ourselves.
-pub const DEFAULT_THRESHOLD: f64 = 0.363;
+/// Derived here rather than taken from OpenCV Zoo, over the same LFW 6000-pair
+/// protocol as [`ARCFACE_DEFAULT_THRESHOLD`]: 0.3156 ± 0.0109 across the ten
+/// official folds, at 0.9887 ± 0.0036 balanced accuracy. Nothing scores a
+/// perfect 1.0000, so the value is genuinely constrained by the data.
+///
+/// OpenCV Zoo publishes 0.363 for `face_recognition_sface_2021dec`, and that is
+/// a perfectly reasonable number - it sits inside the band scoring within 0.5
+/// percentage points of optimal. But it describes OpenCV's own pipeline, and
+/// this crate's differs slightly.
+///
+/// The choice between them is a trade, not a free win, and balanced accuracy
+/// hides which way: over LFW's 3000 same and 3000 different pairs, 0.316 misses
+/// 55 genuine pairs and wrongly accepts 11, while 0.363 misses 72 and wrongly
+/// accepts only 2. The derived value is taken because it scores better overall
+/// (0.9890 against 0.9877) and because a missed match is recoverable - the
+/// similarity is still printed - whereas a false accept reads as a confident
+/// identification. Anyone who would rather err the other way should pass
+/// `--threshold 0.363`.
+pub const DEFAULT_THRESHOLD: f64 = 0.316;
+
+/// Cosine similarity at/above which ArcFace considers two faces the same
+/// person.
+///
+/// Derived over LFW's 6000-pair protocol - 3000 same, 3000 different, across
+/// its ten official folds - using this crate's own detect/align/embed pipeline
+/// and `tools/derive_threshold.py`. Every pair was usable; none were skipped
+/// for a missed detection.
+///
+/// The value is 0.2394 ± 0.0087 across folds, at 0.9932 ± 0.0034 balanced
+/// accuracy. Two things make it trustworthy where earlier attempts were not:
+/// the per-fold spread is small, *and* no threshold anywhere scores a perfect
+/// 1.0000, which means LFW contains pairs hard enough to actually pin the
+/// value. On a small easy set the second condition fails silently - a 66-pair
+/// set admitted every threshold from 0.167 to 0.729 at a perfect score, and
+/// confidently reported the midpoint of that empty gap as 0.448.
+///
+/// That is why this is so much lower than every earlier estimate (0.374, 0.40,
+/// 0.448, 0.493). Small sets contain no hard genuine pairs, so nothing pulls
+/// the cut downward and it drifts up into the gap. At 0.40 this backend missed
+/// 73 of 3000 genuine pairs; at 0.2394 it misses 37.
+pub const ARCFACE_DEFAULT_THRESHOLD: f64 = 0.239;
 
 /// Which recognition model turns an aligned face into an embedding.
 ///
@@ -46,20 +82,19 @@ pub enum Backend {
 impl Backend {
     /// The same/different-person cutoff to use when the caller didn't pick one.
     ///
-    /// `None` means we do not have a trustworthy value and the caller must
-    /// supply `--threshold` explicitly. That is deliberately not a guess: a
-    /// wrong cutoff doesn't fail loudly, it produces confident nonsense (see
-    /// [`similarity_to_percent`]), so "no default" is the honest encoding of
-    /// "not yet derived".
+    /// Both backends now have one. The return type stays `Option` because the
+    /// distinction it encodes is worth keeping: a backend added later starts
+    /// with no trustworthy value, and returning `None` makes the CLI refuse to
+    /// run rather than invent a cutoff. A wrong threshold does not fail loudly
+    /// - it produces confident nonsense (see [`similarity_to_percent`]) - so
+    /// "no default" remains the honest encoding of "not yet derived".
     ///
-    /// SFace's 0.363 is published by OpenCV Zoo. ArcFace's has no published
-    /// equivalent for this preprocessing, and deriving it needs a pair set
-    /// large enough to be stable - two small sets disagreed by 0.119, far
-    /// beyond their own ±0.033 within-set spread, so neither is usable.
+    /// Both values are derived over LFW's 6000 pairs through this crate's own
+    /// pipeline - see [`DEFAULT_THRESHOLD`] and [`ARCFACE_DEFAULT_THRESHOLD`].
     pub fn default_threshold(self) -> Option<f64> {
         match self {
             Backend::SFace => Some(DEFAULT_THRESHOLD),
-            Backend::ArcFace => None,
+            Backend::ArcFace => Some(ARCFACE_DEFAULT_THRESHOLD),
         }
     }
 
