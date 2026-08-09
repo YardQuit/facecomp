@@ -85,11 +85,20 @@ jobs:
       - name: Smoke-test the AppImage
         run: ./facecomp-x86_64.AppImage --appimage-extract-and-run --help
 
+      # Manual runs only. Every other event that reaches `build` publishes the
+      # AppImage to a release moments later, and release assets are free -
+      # workflow artifacts are not. They count toward the account's Actions
+      # storage quota (500MB on the free plan), and at 90MiB a run with the
+      # 90-day default retention, three days of pushes tripped the 90% usage
+      # warning. workflow_dispatch is the one event with nowhere else to put
+      # the file, so it keeps the artifact, briefly.
       - name: Upload build artifact
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: facecomp-x86_64.AppImage
           path: facecomp-x86_64.AppImage
+          retention-days: 7
 
       # Rolling build for testers/early adopters: every push to master
       # overwrites this same pre-release's asset.
