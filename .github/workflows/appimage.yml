@@ -85,11 +85,20 @@ jobs:
       - name: Smoke-test the AppImage
         run: ./facecomp-x86_64.AppImage --appimage-extract-and-run --help
 
+      # Manual runs only. Every other event that reaches `build` publishes the
+      # AppImage to a release moments later, and release assets are free -
+      # workflow artifacts are not. They count toward the account's Actions
+      # storage quota (500MB on the free plan), and at 90MiB a run with the
+      # 90-day default retention, three days of pushes tripped the 90% usage
+      # warning. workflow_dispatch is the one event with nowhere else to put
+      # the file, so it keeps the artifact, briefly.
       - name: Upload build artifact
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: facecomp-x86_64.AppImage
           path: facecomp-x86_64.AppImage
+          retention-days: 7
 
       # Rolling build for testers/early adopters: every push to master
       # overwrites this same pre-release's asset.
@@ -112,3 +121,41 @@ jobs:
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: facecomp-x86_64.AppImage
+
+  # Bounds artifact storage at the 5 newest, deleting the rest. Retention
+  # alone can't do that: it expires artifacts by age, so a burst of builds
+  # still stacks up 90MiB copies until the account quota complains, which is
+  # how 21 of them got retained at once. Runs after `build` so the artifact
+  # this run may have just uploaded is the newest of the survivors, and is
+  # skipped alongside it on pull requests.
+  cleanup-artifacts:
+    needs: build
+    runs-on: ubuntu-22.04
+    # Deleting artifacts needs actions: write, which the workflow-level
+    # `contents: write` grant doesn't cover. Job-level so the packaging jobs
+    # don't carry a scope they never use.
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const keep = 5;
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+            );
+            const stale = artifacts
+              .filter(a => !a.expired)
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+              .slice(keep);
+            for (const a of stale) {
+              core.info(`deleting ${a.name} #${a.id} of ${a.created_at}, ` +
+                        `${(a.size_in_bytes / 1048576).toFixed(1)} MiB`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: a.id,
+              });
+            }
+            core.info(`deleted ${stale.length}, kept the newest ${Math.min(keep, artifacts.length - stale.length)}`);
