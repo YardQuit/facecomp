@@ -5,3 +5,4 @@
 /packaging/.tools
 /*.AppImage
 __pycache__/
+*.elc

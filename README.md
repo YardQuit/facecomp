@@ -54,6 +54,44 @@ The resulting binary is at `target/release/facecomp`. Point
 first if it isn't the one your system's `pkg-config` would find by
 default.
 
+### Tests
+
+```sh
+cargo test --all-targets
+```
+
+`--all-targets` so `examples/ordering_check.rs` compiles too — it is
+the tool that measured the numbers `tests/arcface_alignment.rs`
+encodes, and it should not be allowed to rot.
+
+The Emacs frontend has its own suite, in ERT rather than Cargo, since
+nothing about it is Rust:
+
+```sh
+emacs -Q --batch -L emacs -l emacs/facecomp-tests.el \
+  -f ert-run-tests-batch-and-exit
+```
+
+It needs neither OpenCV nor a model file: `call-process` is stubbed and
+the argument vector `facecomp.el` would have handed the executable is
+inspected instead. That is the part of the frontend which can be wrong
+without anything failing — which cutoff, which backend, which weights
+and which photos count as masters are all decided in Lisp, and getting
+one of them wrong produces a confident wrong number rather than an
+error.
+
+Byte-compile it as well, since a warning there catches what a test
+cannot reach:
+
+```sh
+emacs -Q --batch -L emacs --eval '(setq byte-compile-error-on-warn t)' \
+  -f batch-byte-compile emacs/facecomp.el emacs/facecomp-tests.el
+```
+
+Both suites run in CI on every pull request, the Emacs one on Emacs
+27.1 as well as current, 27.1 being the version `Package-Requires`
+claims to support.
+
 ## Model files
 
 `facecomp` needs pretrained model files at runtime. They are not

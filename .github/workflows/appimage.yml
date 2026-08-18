@@ -29,14 +29,57 @@ jobs:
       - name: Run tests
         run: cargo test --all-targets
 
+  # The Emacs front end, with the subprocess stubbed: no OpenCV, no model
+  # files and no photographs, so this needs nothing but Emacs and finishes in
+  # under a second. Kept out of `test` for that reason - it has no business
+  # queueing behind an OpenCV build.
+  emacs-test:
+    strategy:
+      # Both legs are wanted even when one fails: which Emacs broke is most
+      # of the diagnosis.
+      fail-fast: false
+      matrix:
+        # 22.04 carries the Emacs that facecomp.el's Package-Requires claims
+        # to support, and it is the one where `string-trim' and
+        # `string-empty-p' still live in subr-x rather than in core - they
+        # reach facecomp.el only because `json' and `dired' happen to require
+        # subr-x themselves. ubuntu-latest covers what people actually run.
+        # Neither version alone is the interesting one.
+        os: [ubuntu-22.04, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emacs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends emacs-nox
+          emacs --version | head -1
+
+      # Warnings as errors: a byte-compiler warning is how a typo on a branch
+      # that no test happens to reach gets caught at all. The suite is
+      # compiled too, so its own mistakes surface the same way.
+      - name: Byte-compile
+        run: |
+          emacs -Q --batch -L emacs \
+            --eval '(setq byte-compile-error-on-warn t)' \
+            -f batch-byte-compile emacs/facecomp.el emacs/facecomp-tests.el
+
+      # Against the byte-compiled facecomp.el just produced, since that is
+      # what `package.el' installs and therefore what people actually load.
+      - name: Run tests
+        run: |
+          emacs -Q --batch -L emacs -l emacs/facecomp-tests.el \
+            -f ert-run-tests-batch-and-exit
+
   build:
-    # Gated on `test`, so nothing is ever packaged or published from a tree
-    # whose tests fail. This also serialises the two jobs, which means `build`
-    # reuses the OpenCV that `test` just cached rather than racing it for the
-    # same key.
-    needs: test
-    # Pull requests stop at `test`. Packaging is only useful for something
-    # that's going to be published.
+    # Gated on both suites, so nothing is ever packaged or published from a
+    # tree whose tests fail. Gating on `test` also serialises the two OpenCV
+    # jobs, which means `build` reuses the OpenCV that `test` just cached
+    # rather than racing it for the same key.
+    needs: [test, emacs-test]
+    # Pull requests stop at the test jobs. Packaging is only useful for
+    # something that's going to be published.
     if: github.event_name != 'pull_request'
     # Built on the oldest LTS GitHub still offers, since glibc is
     # forward-compatible only: a binary built on newer glibc won't run on
