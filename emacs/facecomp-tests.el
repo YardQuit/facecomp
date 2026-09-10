@@ -1,7 +1,7 @@
 ;;; facecomp-tests.el --- Tests for facecomp.el -*- lexical-binding: t -*-
 
-;; Copyright (C) 2026 Michael Jones
-;; Author: Michael Jones <yardquit@pm.me>
+;; Copyright (C) 2026 Michael A Jones
+;; Author: Michael A Jones <yardquit@pm.me>
 ;; Assisted-by: Claude [Claude Code]
 
 ;; This file is not part of GNU Emacs.

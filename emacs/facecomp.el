@@ -1,8 +1,8 @@
 ;;; facecomp.el --- Compare faces across photos via a Rust backend -*- lexical-binding: t -*-
 
-;; Copyright (C) 2026 Michael Jones
-;; Author: Michael Jones <yardquit@pm.me>
-;; Maintainer: Michael Jones
+;; Copyright (C) 2026 Michael A Jones
+;; Author: Michael A Jones <yardquit@pm.me>
+;; Maintainer: Michael A Jones
 ;; Assisted-by: Claude [Claude Code]
 ;; URL: https://github.com/yardquit/facecomp
 ;; Version: 0.1.0
