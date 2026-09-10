@@ -2,6 +2,7 @@
 
 ;; Copyright (C) 2026 Michael A Jones
 ;; Author: Michael A Jones <yardquit@pm.me>
+;; Maintainer: Michael A Jones <yardquit@pm.me>
 ;; Assisted-by: Claude [Claude Code]
 
 ;; This file is not part of GNU Emacs.
