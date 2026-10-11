@@ -11,7 +11,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use opencv::core::{Mat, MatTraitConst, Point2f, Scalar, Size, Vector, CV_32F, NORM_L2};
+use opencv::core::{Mat, MatTrait, MatTraitConst, Point2f, Scalar, Size, Vector, CV_32F, NORM_L2};
 use opencv::objdetect::{
     FaceDetectorYN, FaceDetectorYNTrait, FaceRecognizerSF, FaceRecognizerSFTrait,
     FaceRecognizerSFTraitConst, FaceRecognizerSF_FR_COSINE,
@@ -507,7 +507,16 @@ impl FaceComparer {
     }
 
     /// Runs YuNet detection on the image at `path`. `faces` is a Mat with one
-    /// row per detected face: `[x, y, w, h, 5x(landmark x, landmark y), score]`.
+    /// row per detected face: `[x, y, w, h, 5x(landmark x, landmark y), score]`,
+    /// in the image's own pixels.
+    ///
+    /// YuNet finds faces of moderate size. Run at full resolution on a large
+    /// photo - a camera's, or a close-up profile picture - a face filling the
+    /// frame is missed entirely. So the image is searched shrunk to a longest
+    /// side of 640 pixels, then 1280 or 320 if that finds nothing, and the
+    /// boxes and landmarks are scaled back: alignment still crops from the
+    /// full-resolution original. An image no larger than that is searched as
+    /// it is.
     fn detect(&mut self, path: &Path) -> Result<(Mat, Mat), FacecompError> {
         let path_str = path_to_str(path)?;
         let image = imgcodecs::imread(path_str, imgcodecs::IMREAD_COLOR)
@@ -520,19 +529,46 @@ impl FaceComparer {
         }
 
         let size = image.size().map_err(|e| cv_image_err(path, e))?;
-        self.detector
-            .set_input_size(size)
-            .map_err(|e| cv_image_err(path, e))?;
+        let longest = f64::from(size.width.max(size.height));
+        for side in [640.0, 1280.0, 320.0] {
+            let scale = (side / longest).min(1.0);
+            let mut shrunk = Mat::default();
+            let searched = if scale < 1.0 {
+                let target = Size::new(
+                    ((f64::from(size.width) * scale).round() as i32).max(1),
+                    ((f64::from(size.height) * scale).round() as i32).max(1),
+                );
+                imgproc::resize(&image, &mut shrunk, target, 0.0, 0.0, imgproc::INTER_AREA)
+                    .map_err(|e| cv_image_err(path, e))?;
+                &shrunk
+            } else {
+                &image
+            };
+            self.detector
+                .set_input_size(searched.size().map_err(|e| cv_image_err(path, e))?)
+                .map_err(|e| cv_image_err(path, e))?;
 
-        let mut faces = Mat::default();
-        self.detector
-            .detect(&image, &mut faces)
-            .map_err(|e| cv_image_err(path, e))?;
-        if faces.rows() == 0 {
-            return Err(FacecompError::NoFaceDetected(path.to_path_buf()));
+            let mut faces = Mat::default();
+            self.detector
+                .detect(searched, &mut faces)
+                .map_err(|e| cv_image_err(path, e))?;
+            if faces.rows() > 0 {
+                if scale < 1.0 {
+                    // the box (4) and the five landmarks (10) back in the original's pixels
+                    for row in 0..faces.rows() {
+                        for column in 0..14 {
+                            let value = faces.at_2d_mut::<f32>(row, column).map_err(|e| cv_image_err(path, e))?;
+                            *value /= scale as f32;
+                        }
+                    }
+                }
+                return Ok((image, faces));
+            }
+            if scale == 1.0 {
+                break;
+            }
         }
-
-        Ok((image, faces))
+        Err(FacecompError::NoFaceDetected(path.to_path_buf()))
     }
 
     /// Aligns and embeds the face in row `index` of `faces` (as detected by

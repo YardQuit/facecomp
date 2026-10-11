@@ -16,6 +16,12 @@ for each — usable as a standalone command-line tool, or from Emacs.
   [Interpreting the percentage](#interpreting-the-percentage)) and
   onto a qualitative confidence label (see
   [Confidence labels](#confidence-labels)).
+- YuNet finds faces of moderate size, so a large photo (a camera's, or a
+  close-up profile picture) is searched shrunk to a longest side of 640
+  pixels, then 1280 or 320 if that finds nothing. Run at full resolution, a
+  face filling such a photo was missed entirely. The boxes and landmarks are
+  scaled back, so each face is still aligned and embedded from the
+  full-resolution original.
 - `emacs/facecomp.el` is a thin frontend: it shells out to the
   `facecomp` binary and renders the JSON result in an Emacs buffer.
   The Rust binary does not depend on Emacs in any way.
